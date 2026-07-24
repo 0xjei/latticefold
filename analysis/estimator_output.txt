@@ -1,0 +1,304 @@
+
+==============================================================================
+0. ENVIRONMENT AND SANITY ANCHORS
+==============================================================================
+estimator source commit : 3e48ef421ec256afddb3e7d2249a77eab6e9ba12 (malb/lattice-estimator main)
+estimator module        : /Users/giacomo/Documents/coding/explorations/latticefold/analysis/venv/lib/python3.13/site-packages/estimator/__init__.py
+python                  : 3.13.3
+passagemath-modules     : 10.8.7
+arora-gb gb_cost prec   : 256 (truncated, conservative)
+cost models             : MATZOV (quantum, headline), BDGL16 (classical ref)
+sanity: Kyber512 best = dual_hybrid 2^139.7 (expect dual_hybrid ~2^139-140) [19.9s]
+sanity: Dilithium2_MSIS_WkUnf lattice rop = 2^152.2 (expect ~2^152.2) [0.4s]
+
+==============================================================================
+PART A: RLWE/BFV threshold-key security (RLWE analysed as LWE, m=+Infinity)
+==============================================================================
+N8192: n = 8192
+  Q = 23945242808084382762735670629034006485879741447405569
+  log2(Q) = 174.0000
+N4096: n = 4096
+  Q = 634029627889566009658444496897
+  log2(Q) = 99.0005
+
+--- A/N8192/ternary -- LWE.estimate, FULL default suite, MATZOV (quantum) ---
+LWEParameters(n=8192, q=23945242808084382762735670629034006485879741447405569, Xs=T(p=4096, m=4096, n=8192), Xe=D(σ=3.20), m=+Infinity, tag='N8192/ternary')
+usvp                 :: rop: ≈2^161.0, red: ≈2^161.0, δ: 1.003662, β: 451, d: 15829, tag: usvp
+bdd                  :: rop: ≈2^160.5, red: ≈2^160.5, svp: ≈2^156.0, β: 449, η: 482, d: 16248, tag: bdd
+dual                 :: rop: ≈2^162.4, mem: ≈2^106.0, m: ≈2^13.0, β: 452, d: 16375, ↻: 1, tag: dual
+dual_hybrid          :: rop: ≈2^161.5, red: ≈2^161.5, guess: ≈2^146.0, β: 449, p: 3, ζ: 0, t: 80, β': 465, N: ≈2^95.1, m: ≈2^13.0
+[elapsed 111.1s]
+summary (MATZOV):
+    arora-gb         rop = +Infinity
+    bkw              rop = +Infinity
+    usvp             rop = 2^161.0
+    bdd              rop = 2^160.5
+    bdd_hybrid       rop = 2^160.5
+    bdd_mitm_hybrid  rop = 2^191.3
+    dual             rop = 2^162.4
+    dual_hybrid      rop = 2^161.5
+  => minimum: 2^160.5 at bdd
+
+--- A/N8192/ternary -- LWE.estimate, lattice attacks only, BDGL16 (classical) ---
+[elapsed 31.3s]
+    usvp             rop = 2^165.0
+    bdd              rop = 2^164.5
+    bdd_hybrid       rop = 2^164.5
+    bdd_mitm_hybrid  rop = 2^193.7
+    dual             rop = 2^165.4
+    dual_hybrid      rop = 2^164.2
+    arora-gb         rop = +Infinity
+    bkw              rop = +Infinity
+  => minimum over lattice attacks: 2^164.2 at dual_hybrid
+
+--- A/N8192/binary -- LWE.estimate, FULL default suite, MATZOV (quantum) ---
+LWEParameters(n=8192, q=23945242808084382762735670629034006485879741447405569, Xs=D(σ=0.50, μ=0.50), Xe=D(σ=3.20), m=+Infinity, tag='N8192/binary')
+usvp                 :: rop: ≈2^159.9, red: ≈2^159.9, δ: 1.003685, β: 447, d: 15873, tag: usvp
+bdd                  :: rop: ≈2^159.6, red: ≈2^159.3, svp: ≈2^157.1, β: 445, η: 486, d: 16214, tag: bdd
+dual                 :: rop: ≈2^161.2, mem: ≈2^105.1, m: ≈2^13.0, β: 448, d: 16276, ↻: 1, tag: dual
+dual_hybrid          :: rop: ≈2^159.2, red: ≈2^159.2, guess: ≈2^153.6, β: 441, p: 2, ζ: 10, t: 120, β': 457, N: ≈2^92.9, m: ≈2^13.0
+[elapsed 277.3s]
+summary (MATZOV):
+    arora-gb         rop = +Infinity
+    bkw              rop = +Infinity
+    usvp             rop = 2^159.9
+    bdd              rop = 2^159.6
+    bdd_hybrid       rop = 2^159.6
+    bdd_mitm_hybrid  rop = 2^191.3
+    dual             rop = 2^161.2
+    dual_hybrid      rop = 2^159.2
+  => minimum: 2^159.2 at dual_hybrid
+
+--- A/N8192/binary -- LWE.estimate, lattice attacks only, BDGL16 (classical) ---
+[elapsed 143.8s]
+    usvp             rop = 2^163.9
+    bdd              rop = 2^163.4
+    bdd_hybrid       rop = 2^163.4
+    bdd_mitm_hybrid  rop = 2^193.6
+    dual             rop = 2^164.5
+    dual_hybrid      rop = 2^162.5
+    arora-gb         rop = +Infinity
+    bkw              rop = +Infinity
+  => minimum over lattice attacks: 2^162.5 at dual_hybrid
+
+--- A/N4096/ternary -- LWE.estimate, FULL default suite, MATZOV (quantum) ---
+LWEParameters(n=4096, q=634029627889566009658444496897, Xs=T(p=2048, m=2048, n=4096), Xe=D(σ=3.20), m=+Infinity, tag='N4096/ternary')
+bkw                  :: rop: ≈2^618.4, m: ≈2^600.3, mem: ≈2^601.3, b: 6, t1: 0, t2: 156, ℓ: 5, #cod: ≈2^11.9, #top: 0, #test: 196, tag: coded-bkw
+usvp                 :: rop: ≈2^139.7, red: ≈2^139.7, δ: 1.004141, β: 378, d: 7973, tag: usvp
+bdd                  :: rop: ≈2^139.2, red: ≈2^139.1, svp: ≈2^134.0, β: 376, η: 403, d: 8008, tag: bdd
+dual                 :: rop: ≈2^141.2, mem: ≈2^90.8, m: ≈2^12.0, β: 380, d: 8193, ↻: 1, tag: dual
+dual_hybrid          :: rop: ≈2^139.9, red: ≈2^139.6, guess: ≈2^137.2, β: 374, p: 5, ζ: 20, t: 30, β': 391, N: ≈2^79.7, m: ≈2^12.0
+[elapsed 46.0s]
+summary (MATZOV):
+    arora-gb         rop = +Infinity
+    bkw              rop = 2^618.4
+    usvp             rop = 2^139.7
+    bdd              rop = 2^139.2
+    bdd_hybrid       rop = 2^139.2
+    bdd_mitm_hybrid  rop = 2^165.9
+    dual             rop = 2^141.2
+    dual_hybrid      rop = 2^139.9
+  => minimum: 2^139.2 at bdd
+
+--- A/N4096/ternary -- LWE.estimate, lattice attacks only, BDGL16 (classical) ---
+[elapsed 16.8s]
+    usvp             rop = 2^142.7
+    bdd              rop = 2^142.0
+    bdd_hybrid       rop = 2^142.0
+    bdd_mitm_hybrid  rop = 2^167.8
+    dual             rop = 2^143.7
+    dual_hybrid      rop = 2^141.9
+    arora-gb         rop = +Infinity
+    bkw              rop = 2^618.4
+  => minimum over lattice attacks: 2^141.9 at dual_hybrid
+
+--- A/N4096/binary -- LWE.estimate, FULL default suite, MATZOV (quantum) ---
+LWEParameters(n=4096, q=634029627889566009658444496897, Xs=D(σ=0.50, μ=0.50), Xe=D(σ=3.20), m=+Infinity, tag='N4096/binary')
+bkw                  :: rop: ≈2^616.7, m: ≈2^599.5, mem: ≈2^600.5, b: 6, t1: 0, t2: 88, ℓ: 5, #cod: ≈2^11.9, #top: 0, #test: 314, tag: coded-bkw
+usvp                 :: rop: ≈2^138.3, red: ≈2^138.3, δ: 1.004179, β: 373, d: 7777, tag: usvp
+bdd                  :: rop: ≈2^137.6, red: ≈2^137.5, svp: ≈2^133.7, β: 370, η: 402, d: 8001, tag: bdd
+dual                 :: rop: ≈2^139.6, mem: ≈2^89.7, m: ≈2^12.0, β: 374, d: 8106, ↻: 1, tag: dual
+dual_hybrid          :: rop: ≈2^137.0, red: ≈2^137.0, guess: ≈2^123.2, β: 365, p: 2, ζ: 10, t: 90, β': 382, N: ≈2^78.8, m: ≈2^12.0
+[elapsed 125.4s]
+summary (MATZOV):
+    arora-gb         rop = +Infinity
+    bkw              rop = 2^616.7
+    usvp             rop = 2^138.3
+    bdd              rop = 2^137.6
+    bdd_hybrid       rop = 2^137.6
+    bdd_mitm_hybrid  rop = 2^165.2
+    dual             rop = 2^139.6
+    dual_hybrid      rop = 2^137.0
+  => minimum: 2^137.0 at dual_hybrid
+
+--- A/N4096/binary -- LWE.estimate, lattice attacks only, BDGL16 (classical) ---
+[elapsed 88.2s]
+    usvp             rop = 2^141.2
+    bdd              rop = 2^140.4
+    bdd_hybrid       rop = 2^140.4
+    bdd_mitm_hybrid  rop = 2^166.9
+    dual             rop = 2^141.9
+    dual_hybrid      rop = 2^139.0
+    arora-gb         rop = +Infinity
+    bkw              rop = 2^616.7
+  => minimum over lattice attacks: 2^139.0 at dual_hybrid
+
+==============================================================================
+A': Eq4 rule-of-thumb cross-check: log2(q) <= log2(B) + (d-75)/37.5, B=20, d=n
+==============================================================================
+N8192: log2(Q) = 174.00,  log2(B)+(d-75)/37.5 = 220.78  ->  SATISFIED by 46.78 bits of modulus
+    ternary estimator (MATZOV): 2^160.5 -> 128-bit PQ PASS
+    binary  estimator (MATZOV): 2^159.2 -> 128-bit PQ PASS
+N4096: log2(Q) = 99.00,  log2(B)+(d-75)/37.5 = 111.55  ->  SATISFIED by 12.55 bits of modulus
+    ternary estimator (MATZOV): 2^139.2 -> 128-bit PQ PASS
+    binary  estimator (MATZOV): 2^137.0 -> 128-bit PQ PASS
+N8192: Eq4 requires d >= 6438 for log2(Q)=174.00, B=20 (deployed d=8192)
+N4096: Eq4 requires d >= 3625 for log2(Q)=99.00, B=20 (deployed d=4096)
+
+==============================================================================
+PART B: MSIS/Ajtai commitment security (mapping: SIS n=kappa*d, m=m_mod*d, norm=inf)
+==============================================================================
+
+--- B/R1     (N8192, q~2^58,  m=3, beta=2^15 ) kappa=4 -> SIS(n=32768, q~2^58.0, beta=2^15.0, m=24576, norm=inf) ---
+  structure: kappa*d = 32768 > m_mod*d = 24576
+  A in R_q^(4x3) is injective w.h.p. (more Z_q-equations than unknowns).
+  Kernel lattice Lambda = q*Z^m: shortest nonzero kernel vector is q*e_i
+  with ||.||_inf = q ~ 2^58.0. Any beta < q admits NO solution at all.
+  counting bound: solutions exist only for m >= ~237568 Z_q-columns (~29.0 ring elements); deployed: 24576 columns (3 ring elements)
+  estimator[MATZOV]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None, prob=None) [42.2s]
+  estimator[BDGL16]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None, prob=None) [41.6s]
+
+--- B/R1     (N8192, q~2^58,  m=3, beta=2^15 ) kappa=8 -> SIS(n=65536, q~2^58.0, beta=2^15.0, m=24576, norm=inf) ---
+  structure: kappa*d = 65536 > m_mod*d = 24576
+  A in R_q^(8x3) is injective w.h.p. (more Z_q-equations than unknowns).
+  Kernel lattice Lambda = q*Z^m: shortest nonzero kernel vector is q*e_i
+  with ||.||_inf = q ~ 2^58.0. Any beta < q admits NO solution at all.
+  counting bound: solutions exist only for m >= ~475136 Z_q-columns (~58.0 ring elements); deployed: 24576 columns (3 ring elements)
+  estimator[MATZOV]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None, prob=None) [41.7s]
+  estimator[BDGL16]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None, prob=None) [41.2s]
+
+--- B/R4/R6  (N8192, q~2^58,  m=2, beta=2^75 ) kappa=4 -> SIS(n=32768, q~2^58.0, beta=2^75.0, m=16384, norm=inf) ---
+  structure: kappa*d = 32768 > m_mod*d = 16384
+  A in R_q^(4x2) is injective w.h.p. (more Z_q-equations than unknowns).
+  Kernel lattice Lambda = q*Z^m: shortest nonzero kernel vector is q*e_i
+  with ||.||_inf = q ~ 2^58.0. Any beta < q admits NO solution at all.
+  counting bound: solutions exist only for m >= ~50016 Z_q-columns (~6.1 ring elements); deployed: 16384 columns (2 ring elements)
+  beta = 2^75.0 >= (q-1)/2 ~ 2^57.0: TRIVIAL break -- x = q*e_i is a kernel
+  vector with ||x||_inf = q <= beta. MSIS unsound at this bound, independent of kappa.
+Algorithm functools.partial(<estimator.sis_lattice.SISLattice object at 0x134844c20>, red_cost_model=<estimator.reduction.MATZOV object at 0x1346b0980>, red_shape_model=<function GSA at 0x1346af6a0>) on SISParameters(n=32768, q=288230376128643073, length_bound=37778931862957161709568, m=16384, norm=+Infinity, tag='R4/R6  (N8192, q~2^58,  m=2, beta=2^75 ) k=4') failed with SIS trivially easy. Please set norm bound < q.
+  estimator[MATZOV]: raised KeyError: 'lattice'
+Algorithm functools.partial(<estimator.sis_lattice.SISLattice object at 0x134844c20>, red_cost_model=<estimator.reduction.BDGL16 object at 0x1346b0590>, red_shape_model=<function GSA at 0x1346af6a0>) on SISParameters(n=32768, q=288230376128643073, length_bound=37778931862957161709568, m=16384, norm=+Infinity, tag='R4/R6  (N8192, q~2^58,  m=2, beta=2^75 ) k=4') failed with SIS trivially easy. Please set norm bound < q.
+  estimator[BDGL16]: raised KeyError: 'lattice'
+
+--- B/R4/R6  (N8192, q~2^58,  m=2, beta=2^75 ) kappa=8 -> SIS(n=65536, q~2^58.0, beta=2^75.0, m=16384, norm=inf) ---
+  structure: kappa*d = 65536 > m_mod*d = 16384
+  A in R_q^(8x2) is injective w.h.p. (more Z_q-equations than unknowns).
+  Kernel lattice Lambda = q*Z^m: shortest nonzero kernel vector is q*e_i
+  with ||.||_inf = q ~ 2^58.0. Any beta < q admits NO solution at all.
+  counting bound: solutions exist only for m >= ~100030 Z_q-columns (~12.2 ring elements); deployed: 16384 columns (2 ring elements)
+  beta = 2^75.0 >= (q-1)/2 ~ 2^57.0: TRIVIAL break -- x = q*e_i is a kernel
+  vector with ||x||_inf = q <= beta. MSIS unsound at this bound, independent of kappa.
+Algorithm functools.partial(<estimator.sis_lattice.SISLattice object at 0x134844c20>, red_cost_model=<estimator.reduction.MATZOV object at 0x1346b0980>, red_shape_model=<function GSA at 0x1346af6a0>) on SISParameters(n=65536, q=288230376128643073, length_bound=37778931862957161709568, m=16384, norm=+Infinity, tag='R4/R6  (N8192, q~2^58,  m=2, beta=2^75 ) k=8') failed with SIS trivially easy. Please set norm bound < q.
+  estimator[MATZOV]: raised KeyError: 'lattice'
+Algorithm functools.partial(<estimator.sis_lattice.SISLattice object at 0x134844c20>, red_cost_model=<estimator.reduction.BDGL16 object at 0x1346b0590>, red_shape_model=<function GSA at 0x1346af6a0>) on SISParameters(n=65536, q=288230376128643073, length_bound=37778931862957161709568, m=16384, norm=+Infinity, tag='R4/R6  (N8192, q~2^58,  m=2, beta=2^75 ) k=8') failed with SIS trivially easy. Please set norm bound < q.
+  estimator[BDGL16]: raised KeyError: 'lattice'
+
+--- B/R7 P-tr(N8192, q~2^176, m=7, beta=2^120) kappa=4 -> SIS(n=32768, q~2^176.0, beta=2^120.0, m=57344, norm=inf) ---
+  structure: kappa*d = 32768 <= m_mod*d = 57344 (compressing, real kernel, dim >= 24576)
+  counting bound: solutions exist only for m >= ~95326 Z_q-columns (~11.6 ring elements); deployed: 57344 columns (7 ring elements)
+  estimator[MATZOV]: rop = 2^2943.5  (beta_BKZ=10260, d=57344, zeta=0, prob=1) [38.3s]
+  estimator[BDGL16]: rop = 2^3009.2  (beta_BKZ=10185, d=57344, zeta=0, prob=1) [55.0s]
+
+--- B/R7 P-tr(N8192, q~2^176, m=7, beta=2^120) kappa=8 -> SIS(n=65536, q~2^176.0, beta=2^120.0, m=57344, norm=inf) ---
+  structure: kappa*d = 65536 > m_mod*d = 57344
+  A in R_q^(8x7) is injective w.h.p. (more Z_q-equations than unknowns).
+  Kernel lattice Lambda = q*Z^m: shortest nonzero kernel vector is q*e_i
+  with ||.||_inf = q ~ 2^176.0. Any beta < q admits NO solution at all.
+  counting bound: solutions exist only for m >= ~190652 Z_q-columns (~23.3 ring elements); deployed: 57344 columns (7 ring elements)
+  estimator[MATZOV]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None, prob=None) [116.4s]
+  estimator[BDGL16]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None, prob=None) [115.6s]
+
+==============================================================================
+SUMMARY TABLES
+==============================================================================
+
+BFV/RLWE key security (bits = min over full attack suite, m=+Infinity):
+set      secret   MATZOV (PQ) best       BDGL16 (class.)        >=128 PQ? 
+N8192    ternary  160.5 (bdd)            164.2 (dual_hybrid)    YES       
+N8192    binary   159.2 (dual_hybrid)    162.5 (dual_hybrid)    YES       
+N4096    ternary  139.2 (bdd)            141.9 (dual_hybrid)    YES       
+N4096    binary   137.0 (dual_hybrid)    139.0 (dual_hybrid)    YES       
+
+MSIS/Ajtai commitment security:
+track                                  kappa  structure    MATZOV rop     BDGL16 rop     verdict
+R1     (N8192, q~2^58,  m=3, beta=2^15 ) 4      injective    +inf           +inf           unconditionally binding (no kernel vectors)
+R1     (N8192, q~2^58,  m=3, beta=2^15 ) 8      injective    +inf           +inf           unconditionally binding (no kernel vectors)
+R4/R6  (N8192, q~2^58,  m=2, beta=2^75 ) 4      injective    n/a            n/a            BROKEN at beta>=q (trivial kernel vector)
+R4/R6  (N8192, q~2^58,  m=2, beta=2^75 ) 8      injective    n/a            n/a            BROKEN at beta>=q (trivial kernel vector)
+R7 P-tr(N8192, q~2^176, m=7, beta=2^120) 4      compressing  2^2943.5       2^3009.2       binding, huge margin
+R7 P-tr(N8192, q~2^176, m=7, beta=2^120) 8      injective    +inf           +inf           unconditionally binding (no kernel vectors)
+
+Done.
+
+==============================================================================
+PART B2: MSIS/Ajtai with CORRECTED digit norm bounds (beta = B*slack, B=2^15)
+==============================================================================
+mapping: SIS(n=kappa*d, q, beta, m=m_mod*d, norm=+inf), d=8192, kappa=4
+cost models: MATZOV (PQ), BDGL16 (classical)
+
+--- B2/R1    beta=2^20 (q~2^58,  m=3) -> SIS(n=32768, q~2^58.0, beta=2^20.0, m=24576) ---
+  beta vs (q-1)/2: 2^20.0 vs 2^57.0 -> margin 37.0 bits (must be > 0 for binding to be meaningful)
+  structure: kappa*d = 32768 > m*d = 24576 -> A injective w.h.p.;
+  kernel lattice = q*Z^m, shortest kernel vector q*e_i with ||.||_inf = q ~ 2^58.0.
+  beta = 2^20.0 < q -> NO admissible solution exists: unconditionally binding.
+  norm margin: log2(q/beta) = 38.0 bits
+  estimator[MATZOV]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None) [36.6s]
+  estimator[BDGL16]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None) [36.6s]
+
+--- B2/R4/R6 beta=2^20 (q~2^58,  m=2) -> SIS(n=32768, q~2^58.0, beta=2^20.0, m=16384) ---
+  beta vs (q-1)/2: 2^20.0 vs 2^57.0 -> margin 37.0 bits (must be > 0 for binding to be meaningful)
+  structure: kappa*d = 32768 > m*d = 16384 -> A injective w.h.p.;
+  kernel lattice = q*Z^m, shortest kernel vector q*e_i with ||.||_inf = q ~ 2^58.0.
+  beta = 2^20.0 < q -> NO admissible solution exists: unconditionally binding.
+  norm margin: log2(q/beta) = 38.0 bits
+  estimator[MATZOV]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None) [22.1s]
+  estimator[BDGL16]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None) [21.8s]
+
+--- B2/R4/R6 beta=2^25 (q~2^58,  m=2) -> SIS(n=32768, q~2^58.0, beta=2^25.0, m=16384) ---
+  beta vs (q-1)/2: 2^25.0 vs 2^57.0 -> margin 32.0 bits (must be > 0 for binding to be meaningful)
+  structure: kappa*d = 32768 > m*d = 16384 -> A injective w.h.p.;
+  kernel lattice = q*Z^m, shortest kernel vector q*e_i with ||.||_inf = q ~ 2^58.0.
+  beta = 2^25.0 < q -> NO admissible solution exists: unconditionally binding.
+  norm margin: log2(q/beta) = 33.0 bits
+  estimator[MATZOV]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None) [22.1s]
+  estimator[BDGL16]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None) [21.8s]
+
+--- B2/R7    beta=2^20 (q~2^176, m=7) -> SIS(n=32768, q~2^176.0, beta=2^20.0, m=57344) ---
+  beta vs (q-1)/2: 2^20.0 vs 2^175.0 -> margin 155.0 bits (must be > 0 for binding to be meaningful)
+  structure: compressing (kernel dim >= 24576)
+  expected #admissible solutions ~ 2^(-4562944)  [= (2*beta+1)^m / q^n]
+  Gaussian-heuristic shortest kernel vector ~ 2^106.4 vs beta = 2^20.0 -> gap 86.4 bits
+  counting bound: solutions exist only for m >= ~549256 columns (~67.0 ring elements); deployed 7
+  estimator[MATZOV]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None) [100.6s]
+  estimator[BDGL16]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None) [100.3s]
+
+--- B2/R7    beta=2^25 (q~2^176, m=7) -> SIS(n=32768, q~2^176.0, beta=2^25.0, m=57344) ---
+  beta vs (q-1)/2: 2^25.0 vs 2^175.0 -> margin 150.0 bits (must be > 0 for binding to be meaningful)
+  structure: compressing (kernel dim >= 24576)
+  expected #admissible solutions ~ 2^(-4276224)  [= (2*beta+1)^m / q^n]
+  Gaussian-heuristic shortest kernel vector ~ 2^106.4 vs beta = 2^25.0 -> gap 81.4 bits
+  counting bound: solutions exist only for m >= ~443630 columns (~54.2 ring elements); deployed 7
+  estimator[MATZOV]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None) [100.8s]
+  estimator[BDGL16]: rop = +Infinity  (beta_BKZ=None, d=None, zeta=None) [100.1s]
+
+==============================================================================
+PART B2 SUMMARY
+==============================================================================
+case                             structure    MATZOV rop     BDGL16 rop     verdict
+R1    beta=2^20 (q~2^58,  m=3)   injective    +inf           +inf           unconditionally binding (norm margin 2^38)
+R4/R6 beta=2^20 (q~2^58,  m=2)   injective    +inf           +inf           unconditionally binding (norm margin 2^38)
+R4/R6 beta=2^25 (q~2^58,  m=2)   injective    +inf           +inf           unconditionally binding (norm margin 2^33)
+R7    beta=2^20 (q~2^176, m=7)   compressing  +inf           +inf           no admissible solutions exist w.h.p. (2^-4562944 expected)
+R7    beta=2^25 (q~2^176, m=7)   compressing  +inf           +inf           no admissible solutions exist w.h.p. (2^-4276224 expected)
+
+Done (Part B2).

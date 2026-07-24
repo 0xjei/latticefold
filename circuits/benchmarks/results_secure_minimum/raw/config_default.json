@@ -1,0 +1,52 @@
+{
+  "circuit_name": "validate_secure_configs",
+  "circuit_path": "circuits/bin/config",
+  "mode": "secure",
+  "oracle_type": "default",
+  "timestamp": "2026-06-11T10:58:13Z",
+  "system_info": {
+    "os": "Darwin",
+    "arch": "arm64",
+    "cpu_model": "Apple M4 Pro",
+    "cpu_cores": "14",
+    "ram_gb": "48.00",
+    "nargo_version": "nargo version = 1.0.0-beta.16 noirc version = 1.0.0-beta.16+2d46fca7203545cbbfb31a0d0328de6c10a8db95 (git version hash: 2d46fca7203545cbbfb31a0d0328de6c10a8db95, is dirty: false) ",
+    "bb_version": "3.0.0-nightly.20260102 "
+  },
+  "compilation": {
+    "time_seconds": 0,
+    "success": false,
+    "circuit_size_bytes": 0
+  },
+  "execution": {
+    "time_seconds": 0,
+    "success": false,
+    "witness_size_bytes": 0
+  },
+  "gates": {
+    "total_gates": 0,
+    "acir_opcodes": 0,
+    "raw_output": "\n"
+  },
+  "vk_generation": {
+    "time_seconds": 0,
+    "success": false,
+    "vk_size_bytes": 0
+  },
+  "proof_generation": {
+    "time_seconds": 0,
+    "success": false,
+    "proof_size_bytes": 0,
+    "proof_hex": "0x"
+  },
+  "verification": {
+    "time_seconds": 0,
+    "success": false,
+    "public_inputs_hex": "0x",
+    "public_inputs_size_bytes": 0,
+    "calldata_gas_proof": 0,
+    "calldata_gas_public_inputs": 0,
+    "calldata_gas_total": 0
+  },
+  "error": "Compilation skipped but circuit JSON not found at target/validate_secure_configs.json\n"
+}

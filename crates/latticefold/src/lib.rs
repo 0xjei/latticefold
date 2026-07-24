@@ -18,6 +18,10 @@ pub mod vdkg_params;
 
 #[cfg(feature = "fhe-bridge")]
 pub mod fhe_bridge;
+#[cfg(feature = "fhe-bridge")]
+pub mod r3_bridge;
+#[cfg(feature = "fhe-bridge")]
+pub mod vdkg_flow;
 
 #[doc(hidden)]
 mod ark_base {

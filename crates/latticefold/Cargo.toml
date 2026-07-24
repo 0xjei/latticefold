@@ -16,7 +16,7 @@ parallel = [
     "stark-rings-poly/parallel",
 ]
 getrandom = ["ark-std/getrandom"]
-fhe-bridge = ["dep:fhe", "dep:fhe-rand", "dep:fhe-traits"]
+fhe-bridge = ["dep:fhe", "dep:fhe-rand", "dep:fhe-traits", "dep:fhe-math"]
 
 # dev-only
 dhat-heap = []
@@ -38,6 +38,7 @@ thiserror = { workspace = true }
 fhe = { workspace = true, optional = true }
 fhe-rand = { workspace = true, optional = true }
 fhe-traits = { workspace = true, optional = true }
+fhe-math = { workspace = true, optional = true }
 
 [build-dependencies]
 proc-macro2 = { workspace = true }
@@ -126,6 +127,14 @@ path = "examples/interfold/composition/dkg_wide_smudging.rs"
 [[example]]
 name = "dkg_fhe_committee_r4"
 path = "examples/interfold/fhe/dkg_fhe_committee_r4.rs"
+
+[[example]]
+name = "dkg_fhe_full_flow"
+path = "examples/interfold/fhe/dkg_fhe_full_flow.rs"
+
+[[example]]
+name = "dkg_fhe_r3"
+path = "examples/interfold/fhe/dkg_fhe_r3.rs"
 
 [[example]]
 name = "dkg_fhe_multichannel_r4"

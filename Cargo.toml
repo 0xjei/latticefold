@@ -32,6 +32,7 @@ stark-rings-linalg = { git = "https://github.com/NethermindEth/stark-rings.git",
 stark-rings-poly = { git = "https://github.com/NethermindEth/stark-rings.git", branch = "main", default-features = false }
 fhe = { git = "https://github.com/gnosisguild/fhe.rs.git", rev = "cb83e5e1780ea666f611e3463ab1ad1a68864675", package = "fhe", default-features = false }
 fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs.git", rev = "cb83e5e1780ea666f611e3463ab1ad1a68864675", package = "fhe-traits" }
+fhe-math = { git = "https://github.com/gnosisguild/fhe.rs.git", rev = "cb83e5e1780ea666f611e3463ab1ad1a68864675", package = "fhe-math" }
 fhe-rand = { version = "0.9.2", package = "rand" }
 thiserror = { version = "2.0.18", default-features = false }
 toml = "0.8.23"
@@ -40,10 +41,10 @@ toml = "0.8.23"
 # RUSTDOCFLAGS="--html-in-header docs-header.html" cargo doc --no-deps --document-private-items --open
 rustdoc-args = ["--html-in-header", "docs-header.html"]
 
-# Step 2 (VDKG plan §12.2): fork of stark-rings carrying the custom
-# LatticeFold-congruent ring models (interfold + N4096); see
+# Step 2 (VDKG plan §12.2): local fork of stark-rings carrying the custom
+# LatticeFold-congruent ring models (interfold + N4096 + N8192); see
 # crates/latticefold/examples/interfold/ring/dkg_ring_model.rs.
 [patch."https://github.com/NethermindEth/stark-rings.git"]
-stark-rings = { git = "https://github.com/0xjei/stark-rings.git", branch = "interfold" }
-stark-rings-linalg = { git = "https://github.com/0xjei/stark-rings.git", branch = "interfold" }
-stark-rings-poly = { git = "https://github.com/0xjei/stark-rings.git", branch = "interfold" }
+stark-rings = { path = "../stark-rings/crates/ring" }
+stark-rings-linalg = { path = "../stark-rings/crates/linear_algebra" }
+stark-rings-poly = { path = "../stark-rings/crates/poly" }

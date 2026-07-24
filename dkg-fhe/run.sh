@@ -49,7 +49,9 @@ done
 case "$EXAMPLE" in
   committee)    BIN="dkg_fhe_committee_r4" ;;
   multichannel) BIN="dkg_fhe_multichannel_r4" ;;
-  *) echo "unknown --example '$EXAMPLE' (want committee|multichannel)" >&2; exit 2 ;;
+  full-flow)    BIN="dkg_fhe_full_flow" ;;
+  r3)           BIN="dkg_fhe_r3" ;;
+  *) echo "unknown --example '$EXAMPLE' (want committee|multichannel|full-flow|r3)" >&2; exit 2 ;;
 esac
 
 env=()

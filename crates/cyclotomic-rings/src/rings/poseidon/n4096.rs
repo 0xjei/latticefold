@@ -1,10 +1,10 @@
 use ark_crypto_primitives::sponge::poseidon::{find_poseidon_ark_and_mds, PoseidonConfig};
 use ark_ff::PrimeField;
-use stark_rings::cyclotomic_ring::models::n4096::{Fq0, Fq1, Fq2, FqP};
+use stark_rings::cyclotomic_ring::models::n4096::{Fq0, Fq1, Fq2, FqP, FqS0, FqS1};
 
 use crate::rings::{
     GetPoseidonParams, N4096PPoseidonConfig, N4096Q0PoseidonConfig, N4096Q1PoseidonConfig,
-    N4096Q2PoseidonConfig,
+    N4096Q2PoseidonConfig, N4096S0PoseidonConfig, N4096S1PoseidonConfig,
 };
 
 fn config<F: PrimeField>() -> PoseidonConfig<F> {
@@ -53,6 +53,18 @@ impl GetPoseidonParams<Fq2> for N4096Q2PoseidonConfig {
 
 impl GetPoseidonParams<FqP> for N4096PPoseidonConfig {
     fn get_poseidon_config() -> PoseidonConfig<FqP> {
+        config()
+    }
+}
+
+impl GetPoseidonParams<FqS0> for N4096S0PoseidonConfig {
+    fn get_poseidon_config() -> PoseidonConfig<FqS0> {
+        config()
+    }
+}
+
+impl GetPoseidonParams<FqS1> for N4096S1PoseidonConfig {
+    fn get_poseidon_config() -> PoseidonConfig<FqS1> {
         config()
     }
 }

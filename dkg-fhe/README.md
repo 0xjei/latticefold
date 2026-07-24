@@ -113,5 +113,13 @@ optional **verify** self-check. Notes:
 | `dkg_fhe_r2_r4` | single Shamir share → BFV → metadata-bound R4 |
 | `dkg_fhe_committee_r4` | full committee, single q0 channel (configurable) |
 | `dkg_fhe_multichannel_r4` | full committee across q0/q1/q2 + CRT (configurable) |
+| `dkg_fhe_full_flow` | **full P1→P4 protocol**: R1 key contributions → R2/R3/R4 sharing+transport+folded openings → R5 aggregation → Ruser encryption → folded R6 decryption shares → P-track R7 CRT+decode, recovering the user plaintext. `--params n4096` (default) or `--params n8192` (the Noir `secure-8192`-security set: `t=2^20`, 3×58-bit channels, 176-bit P) |
+| `dkg_fhe_r3` | **R3 share-encryption proofs + folding benchmark**: digit-form transport with real fhe.rs extended encryption (full `(u,e1,e2)` witness), native per-prime proofs, real decryption, one accumulator per prime. `--dealers 5` at degree 8192 ≈ 15s/instance vs Noir C3 10.76s + recursive aggregation |
 
-Run any of them with `cargo +1.91.1 run --release --example <name> --features fhe-bridge`.
+Run any of them with `cargo +1.91.1 run --release --example <name> --features fhe-bridge`,
+or `./run.sh --example full-flow` (add `--n/--h/--t/--recipient` as usual; the
+recipient must be one of the T reconstructing parties).
+
+The custom ring models (N=4096 and N=8192) come from the local `stark-rings`
+fork at `../stark-rings` (`interfold` branch, wired via a `[patch]` path
+dependency in the workspace `Cargo.toml`; also pushed to `0xjei/stark-rings`).

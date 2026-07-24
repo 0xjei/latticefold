@@ -13,7 +13,9 @@ use ark_ff::{Field, PrimeField};
 use cyclotomic_rings::rings::{
     N4096Q0ChallengeSet, N4096Q0Field, N4096Q0RingNTT, N4096Q0RingPoly, N4096Q1ChallengeSet,
     N4096Q1Field, N4096Q1RingNTT, N4096Q1RingPoly, N4096Q2ChallengeSet, N4096Q2Field,
-    N4096Q2RingNTT, N4096Q2RingPoly,
+    N4096Q2RingNTT, N4096Q2RingPoly, N8192Q0ChallengeSet, N8192Q0Field, N8192Q0RingNTT,
+    N8192Q0RingPoly, N8192Q1ChallengeSet, N8192Q1Field, N8192Q1RingNTT, N8192Q1RingPoly,
+    N8192Q2ChallengeSet, N8192Q2Field, N8192Q2RingNTT, N8192Q2RingPoly,
 };
 use fhe::bfv::{self, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe_rand::rng;
@@ -36,13 +38,28 @@ use crate::{
     },
     transcript::{poseidon::PoseidonTranscript, Transcript},
     vdkg_params::{
-        N4096_DEGREE, N4096_SHARE_ENCRYPTION_MODULI, N4096_SHARE_PLAINTEXT_MODULUS,
-        N4096_THRESHOLD_MODULI, N4096_THRESHOLD_MODULUS_PRODUCT,
+        N4096Params, N8192Params, VdkgParams, N4096_DEGREE, N4096_THRESHOLD_MODULI,
+        N4096_THRESHOLD_MODULUS_PRODUCT,
     },
 };
 
 const RECIPIENT_STRIDE: u64 = 1 << 16;
 const CHANNEL_STRIDE: u64 = 1 << 32;
+
+/// Give the global rayon pool a large worker stack: the sumcheck and folding
+/// paths keep whole degree-N ring elements on the stack, and the default
+/// 2 MiB rayon stack overflows nondeterministically at N = 4096 and above.
+/// No-op once any global pool is installed.
+#[cfg(feature = "parallel")]
+pub fn ensure_large_rayon_stack() {
+    let _ = rayon::ThreadPoolBuilder::new()
+        .stack_size(1 << 30)
+        .build_global();
+}
+
+/// No-op without the `parallel` feature.
+#[cfg(not(feature = "parallel"))]
+pub fn ensure_large_rayon_stack() {}
 
 const IDX_SENDER: usize = 0;
 const IDX_RECIPIENT: usize = 1;
@@ -190,33 +207,46 @@ impl DecompositionParams for NativeR4Params {
     const K: usize = 35;
 }
 
+#[derive(Clone)]
+struct Native8192R4Params;
+
+impl DecompositionParams for Native8192R4Params {
+    const B: u128 = 1 << 15;
+    const L: usize = 5;
+    const B_SMALL: usize = 2;
+    // The q channels are 58-bit fields; retain enough binary limbs for signed
+    // field representatives and the public-input decomposition used by NIFS.
+    const K: usize = 59;
+}
+
 /// Encrypt and decrypt one polynomial share using the individual BFV
-/// transport instance.
+/// transport instance (N=4096 parameter set).
 pub fn round_trip_share(share: u64) -> Result<Vec<u64>, Box<dyn Error>> {
     let mut message = vec![0u64; N4096_DEGREE];
     message[0] = share;
     round_trip_poly_share(&message)
 }
 
-/// Encrypt and decrypt a complete degree-N polynomial share.
+/// Encrypt and decrypt a complete degree-N polynomial share (N=4096 set).
 pub fn round_trip_poly_share(message: &[u64]) -> Result<Vec<u64>, Box<dyn Error>> {
-    ShareTransport::new()?.round_trip(message)
+    ShareTransport::<N4096Params>::new()?.round_trip(message)
 }
 
 /// One recipient BFV transport instance shared across channels and dealers.
-pub struct ShareTransport {
+pub struct ShareTransport<P: VdkgParams = N4096Params> {
     params: Arc<bfv::BfvParameters>,
     secret_key: SecretKey,
     public_key: PublicKey,
+    _marker: std::marker::PhantomData<P>,
 }
 
-impl ShareTransport {
+impl<P: VdkgParams> ShareTransport<P> {
     /// Build the individual BFV transport parameters and key pair.
     pub fn new() -> Result<Self, Box<dyn Error>> {
         let params: Arc<bfv::BfvParameters> = bfv::BfvParametersBuilder::new()
-            .set_degree(N4096_DEGREE)
-            .set_plaintext_modulus(N4096_SHARE_PLAINTEXT_MODULUS)
-            .set_moduli(&N4096_SHARE_ENCRYPTION_MODULI)
+            .set_degree(P::DEGREE)
+            .set_plaintext_modulus(P::SHARE_PLAINTEXT)
+            .set_moduli(&P::SHARE_MODULI)
             .set_variance(10)
             .build_arc()?;
 
@@ -227,20 +257,22 @@ impl ShareTransport {
             params,
             secret_key,
             public_key,
+            _marker: std::marker::PhantomData,
         })
     }
 
     fn round_trip(&self, message: &[u64]) -> Result<Vec<u64>, Box<dyn Error>> {
-        if message.len() != N4096_DEGREE {
+        if message.len() != P::DEGREE {
             return Err(format!(
-                "share has {} coefficients, expected {N4096_DEGREE}",
-                message.len()
+                "share has {} coefficients, expected {}",
+                message.len(),
+                P::DEGREE
             )
             .into());
         }
         if message
             .iter()
-            .any(|&coefficient| coefficient >= N4096_SHARE_PLAINTEXT_MODULUS)
+            .any(|&coefficient| coefficient >= P::SHARE_PLAINTEXT)
         {
             return Err("share does not fit the transport plaintext modulus".into());
         }
@@ -379,6 +411,90 @@ pub fn project_channel(values: &[u128], channel: usize) -> Vec<u64> {
         .collect()
 }
 
+/// The whole committee's sharing material on a single RNS channel: per-dealer
+/// secrets and per-dealer, per-recipient shares, all reduced mod q_l.
+///
+/// This is the canonical input of the per-channel R2/R4 machinery. It can be
+/// produced either by projecting Z_Q sharings (the N=4096 path) or by
+/// sampling the sharing polynomials directly on the channel
+/// ([`generate_channel_sharing`], used when Q does not fit `u128`).
+pub struct ChannelSharings {
+    /// Per-dealer secret polynomials on this channel.
+    pub secrets: Vec<Vec<u64>>,
+    /// Per-dealer, per-recipient share polynomials on this channel.
+    pub shares: Vec<Vec<Vec<u64>>>,
+}
+
+/// Project a committee's Z_Q sharings to one RNS channel.
+pub fn project_sharings(sharings: &[ZqSharing], channel: usize) -> ChannelSharings {
+    ChannelSharings {
+        secrets: sharings
+            .iter()
+            .map(|sharing| project_channel(&sharing.secret, channel))
+            .collect(),
+        shares: sharings
+            .iter()
+            .map(|sharing| {
+                sharing
+                    .shares
+                    .iter()
+                    .map(|share| project_channel(share, channel))
+                    .collect()
+            })
+            .collect(),
+    }
+}
+
+/// Generate the committee's sharings directly on one RNS channel: every
+/// dealer's secret polynomial (short, so identical across channels) is shared
+/// with an independent random degree `T - 1` polynomial over Z_{q_l}.
+///
+/// Per plan.md R2, the sharing relation is defined per channel
+/// (`Y_l[k] in R_{q_l}`), so sampling the sharing on the channel is the native
+/// formulation; the channel sharings of one short secret are consistent with a
+/// single Z_Q sharing under CRT.
+pub fn generate_channel_sharing<P: VdkgParams>(
+    secrets: &[Vec<u64>],
+    config: &CommitteeConfig,
+    channel: usize,
+    rng: &mut impl rand::Rng,
+) -> ChannelSharings {
+    let modulus = P::THRESHOLD_MODULI[channel];
+    let shares = secrets
+        .iter()
+        .map(|secret| {
+            let randomness = (0..secret.len())
+                .map(|_| {
+                    (1..config.threshold_t)
+                        .map(|_| rng.next_u64() % modulus)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            (1..=config.committee_n as u64)
+                .map(|x| {
+                    secret
+                        .iter()
+                        .zip(&randomness)
+                        .map(|(&constant, coefficients)| {
+                            let mut value = constant as u128;
+                            let mut power = 1u128;
+                            for &coefficient in coefficients {
+                                power = power * x as u128 % modulus as u128;
+                                value = (value + coefficient as u128 * power) % modulus as u128;
+                            }
+                            value as u64
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    ChannelSharings {
+        secrets: secrets.to_vec(),
+        shares,
+    }
+}
+
 /// Garner CRT reconstruction of the three channel residues into Z_Q.
 pub fn crt_combine(residues: [u64; 3]) -> u128 {
     let [q0, q1, q2] = N4096_THRESHOLD_MODULI;
@@ -408,7 +524,7 @@ pub fn crt_combine(residues: [u64; 3]) -> u128 {
 }
 
 macro_rules! define_channel_bridge {
-    ($module:ident, $ring:ty, $poly:ty, $field:ty, $challenge_set:ty, $channel:expr) => {
+    ($module:ident, $params:ty, $decomp:ty, $ring:ty, $poly:ty, $field:ty, $challenge_set:ty, $channel:expr) => {
         pub mod $module {
             use super::*;
 
@@ -417,7 +533,11 @@ macro_rules! define_channel_bridge {
             pub const CHANNEL: usize = $channel;
 
             pub fn modulus() -> u64 {
-                N4096_THRESHOLD_MODULI[CHANNEL]
+                <$params as VdkgParams>::THRESHOLD_MODULI[CHANNEL]
+            }
+
+            fn degree() -> usize {
+                <$params as VdkgParams>::DEGREE
             }
 
             fn scalar_ring(value: $field) -> $ring {
@@ -477,10 +597,11 @@ macro_rules! define_channel_bridge {
             }
 
             fn share_to_ntt(share: &[u64]) -> Result<$ring, Box<dyn Error>> {
-                if share.len() != N4096_DEGREE {
+                if share.len() != degree() {
                     return Err(format!(
-                        "share has {} coefficients, expected {N4096_DEGREE}",
-                        share.len()
+                        "share has {} coefficients, expected {}",
+                        share.len(),
+                        degree()
                     )
                     .into());
                 }
@@ -605,16 +726,16 @@ macro_rules! define_channel_bridge {
                 let mut rng = ark_std::test_rng();
                 let scheme = AjtaiCommitmentScheme::rand(
                     4,
-                    config.r2_witness_len() * NativeR4Params::L,
+                    config.r2_witness_len() * <$decomp>::L,
                     &mut rng,
                 );
-                let witness = Witness::from_w_ccs::<NativeR4Params>(
+                let witness = Witness::from_w_ccs::<$decomp>(
                     std::iter::once(secret_ntt)
                         .chain(share_ntts.iter().copied())
                         .collect(),
                 );
                 let cm = CCCS {
-                    cm: witness.commit::<NativeR4Params>(&scheme)?,
+                    cm: witness.commit::<$decomp>(&scheme)?,
                     x_ccs: vec![],
                 };
 
@@ -686,7 +807,7 @@ macro_rules! define_channel_bridge {
             ) -> (CCS<$ring>, AjtaiCommitmentScheme<$ring>) {
                 (
                     CCS::from_r1cs(opening_r1cs(), 16),
-                    AjtaiCommitmentScheme::rand(4, 2 * NativeR4Params::L, rng),
+                    AjtaiCommitmentScheme::rand(4, 2 * <$decomp>::L, rng),
                 )
             }
 
@@ -715,9 +836,9 @@ macro_rules! define_channel_bridge {
                 ];
                 ccs.check_relation(&z)?;
 
-                let witness = Witness::from_w_ccs::<NativeR4Params>(vec![share_ntt, domain_tag]);
+                let witness = Witness::from_w_ccs::<$decomp>(vec![share_ntt, domain_tag]);
                 let cm = CCCS {
-                    cm: witness.commit::<NativeR4Params>(scheme)?,
+                    cm: witness.commit::<$decomp>(scheme)?,
                     x_ccs: metadata,
                 };
                 Ok((cm, witness, domain_tag))
@@ -763,22 +884,22 @@ macro_rules! define_channel_bridge {
                 );
 
                 let reopened =
-                    Witness::from_w_ccs::<NativeR4Params>(vec![witness.w_ccs[0], domain_tag]);
+                    Witness::from_w_ccs::<$decomp>(vec![witness.w_ccs[0], domain_tag]);
                 assert_eq!(
                     cm.cm,
-                    reopened.commit::<NativeR4Params>(&scheme)?,
+                    reopened.commit::<$decomp>(&scheme)?,
                     "R4 commitment did not reopen to the transported share"
                 );
 
                 let mut tampered = decoded.to_vec();
                 tampered[0] = (tampered[0] + 1) % modulus();
-                let tampered_witness = Witness::from_w_ccs::<NativeR4Params>(vec![
+                let tampered_witness = Witness::from_w_ccs::<$decomp>(vec![
                     share_to_ntt(&tampered)?,
                     domain_tag,
                 ]);
                 assert_ne!(
                     cm.cm,
-                    tampered_witness.commit::<NativeR4Params>(&scheme)?,
+                    tampered_witness.commit::<$decomp>(&scheme)?,
                     "R4 commitment accepted a tampered transported share"
                 );
 
@@ -826,7 +947,7 @@ macro_rules! define_channel_bridge {
                 absorb_config(&mut fold_verifier, config);
                 for (index, (cm_i, witness_i)) in instances.iter().enumerate().skip(1) {
                     let (new_accumulator, new_witness, proof) =
-                        NIFSProver::<$ring, NativeR4Params, ChannelTranscript>::prove(
+                        NIFSProver::<$ring, $decomp, ChannelTranscript>::prove(
                             &accumulator,
                             &accumulator_witness,
                             cm_i,
@@ -837,7 +958,7 @@ macro_rules! define_channel_bridge {
                         )?;
                     if verify_folds {
                         let verified_accumulator =
-                            NIFSVerifier::<$ring, NativeR4Params, ChannelTranscript>::verify(
+                            NIFSVerifier::<$ring, $decomp, ChannelTranscript>::verify(
                                 &accumulator,
                                 cm_i,
                                 &proof,
@@ -857,13 +978,15 @@ macro_rules! define_channel_bridge {
 
             /// Run the H-dealer committee on this channel: N-share R2 sharing
             /// proofs, BFV transport of the recipient's share, and one folded
-            /// R4 accumulator over all received openings. The `sharings` slice
-            /// holds the H honest dealer sharings folded into R4.
+            /// R4 accumulator over all received openings. The `sharings`
+            /// struct holds the H honest dealer sharings folded into R4,
+            /// already reduced to this channel.
             pub fn fold_committee_r4(
-                transport: &ShareTransport,
-                sharings: &[ZqSharing],
+                transport: &ShareTransport<$params>,
+                sharings: &ChannelSharings,
                 config: &CommitteeConfig,
             ) -> Result<Vec<Vec<u64>>, Box<dyn Error>> {
+                ensure_large_rayon_stack();
                 let recipient_id = config.recipient_id as u64;
                 let mut rng = ark_std::test_rng();
                 let (ccs, scheme) = r4_context(&mut rng);
@@ -873,16 +996,12 @@ macro_rules! define_channel_bridge {
                 // the committee. Errors are stringified to keep the closure's
                 // return type `Send`; only the final NIFS fold chain below is
                 // inherently sequential. Results collect in dealer order.
-                let process = |dealer_index: usize, sharing: &ZqSharing|
+                let process = |dealer_index: usize|
                     -> Result<(Vec<u64>, (CCCS<$ring>, Witness<$ring>)), String> {
                     let sender_id = dealer_index as u64 + 1;
-                    let secret = project_channel(&sharing.secret, CHANNEL);
-                    let shares = sharing
-                        .shares
-                        .iter()
-                        .map(|share| project_channel(share, CHANNEL))
-                        .collect::<Vec<_>>();
-                    prove_r2_sharing(&secret, &shares, config).map_err(|e| e.to_string())?;
+                    let secret = &sharings.secrets[dealer_index];
+                    let shares = &sharings.shares[dealer_index];
+                    prove_r2_sharing(secret, shares, config).map_err(|e| e.to_string())?;
 
                     let decoded = transport
                         .round_trip(&shares[(recipient_id - 1) as usize])
@@ -895,21 +1014,18 @@ macro_rules! define_channel_bridge {
 
                 let dealer_start = std::time::Instant::now();
                 #[cfg(feature = "parallel")]
-                let processed = sharings
-                    .par_iter()
-                    .enumerate()
-                    .map(|(dealer_index, sharing)| process(dealer_index, sharing))
+                let processed = (0..sharings.secrets.len())
+                    .into_par_iter()
+                    .map(process)
                     .collect::<Result<Vec<_>, String>>()?;
                 #[cfg(not(feature = "parallel"))]
-                let processed = sharings
-                    .iter()
-                    .enumerate()
-                    .map(|(dealer_index, sharing)| process(dealer_index, sharing))
+                let processed = (0..sharings.secrets.len())
+                    .map(process)
                     .collect::<Result<Vec<_>, String>>()?;
                 if std::env::var_os("DKG_PHASE_TIMING").is_some() {
                     eprintln!(
                         "[q{CHANNEL}] dealer phase ({} dealers R2+BFV+R4): {:.1}s",
-                        sharings.len(),
+                        sharings.secrets.len(),
                         dealer_start.elapsed().as_secs_f64()
                     );
                 }
@@ -938,6 +1054,8 @@ macro_rules! define_channel_bridge {
 
 define_channel_bridge!(
     q0,
+    N4096Params,
+    NativeR4Params,
     N4096Q0RingNTT,
     N4096Q0RingPoly,
     N4096Q0Field,
@@ -946,6 +1064,8 @@ define_channel_bridge!(
 );
 define_channel_bridge!(
     q1,
+    N4096Params,
+    NativeR4Params,
     N4096Q1RingNTT,
     N4096Q1RingPoly,
     N4096Q1Field,
@@ -954,10 +1074,42 @@ define_channel_bridge!(
 );
 define_channel_bridge!(
     q2,
+    N4096Params,
+    NativeR4Params,
     N4096Q2RingNTT,
     N4096Q2RingPoly,
     N4096Q2Field,
     N4096Q2ChallengeSet,
+    2
+);
+define_channel_bridge!(
+    n8192_q0,
+    N8192Params,
+    Native8192R4Params,
+    N8192Q0RingNTT,
+    N8192Q0RingPoly,
+    N8192Q0Field,
+    N8192Q0ChallengeSet,
+    0
+);
+define_channel_bridge!(
+    n8192_q1,
+    N8192Params,
+    Native8192R4Params,
+    N8192Q1RingNTT,
+    N8192Q1RingPoly,
+    N8192Q1Field,
+    N8192Q1ChallengeSet,
+    1
+);
+define_channel_bridge!(
+    n8192_q2,
+    N8192Params,
+    Native8192R4Params,
+    N8192Q2RingNTT,
+    N8192Q2RingPoly,
+    N8192Q2Field,
+    N8192Q2ChallengeSet,
     2
 );
 
@@ -1044,7 +1196,7 @@ pub fn round_trip_shamir_committee_r4(config: &CommitteeConfig) -> Result<(), Bo
         );
     }
 
-    let decoded = q0::fold_committee_r4(&transport, &sharings, config)?;
+    let decoded = q0::fold_committee_r4(&transport, &project_sharings(&sharings, 0), config)?;
 
     // DKG semantics: the aggregated received shares are a threshold share of
     // the aggregated secret. Reconstruct the aggregate from T aggregated
@@ -1108,10 +1260,10 @@ pub fn round_trip_multichannel_committee_r4(
     // cross the thread boundary (Box<dyn Error> is not Send).
     let (decoded_q0, decoded_q1, decoded_q2) = std::thread::scope(|scope| {
         let handle_q0 = scope
-            .spawn(|| q0::fold_committee_r4(&transport, &sharings, config).map_err(|e| e.to_string()));
+            .spawn(|| q0::fold_committee_r4(&transport, &project_sharings(&sharings, 0), config).map_err(|e| e.to_string()));
         let handle_q1 = scope
-            .spawn(|| q1::fold_committee_r4(&transport, &sharings, config).map_err(|e| e.to_string()));
-        let decoded_q2 = q2::fold_committee_r4(&transport, &sharings, config).map_err(|e| e.to_string());
+            .spawn(|| q1::fold_committee_r4(&transport, &project_sharings(&sharings, 1), config).map_err(|e| e.to_string()));
+        let decoded_q2 = q2::fold_committee_r4(&transport, &project_sharings(&sharings, 2), config).map_err(|e| e.to_string());
         (
             handle_q0.join().unwrap_or_else(|_| Err("q0 fold thread panicked".to_string())),
             handle_q1.join().unwrap_or_else(|_| Err("q1 fold thread panicked".to_string())),

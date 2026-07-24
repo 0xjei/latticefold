@@ -209,6 +209,110 @@ equality-of-openings protocol is still required.
   recombination `v = r0 + q0·t1 + q0·q1·t2` of the three channel residues is
   proven natively in the P ring with commitment reopen/tamper checks.
 
+- **R3 — provable share encryption** (`dkg_fhe_r3.rs` +
+  `crates/latticefold/src/r3_bridge.rs`; opt-in `--features fhe-bridge`) —
+  the Noir bottleneck axis, now real: shares move as their base-B
+  decomposition DIGITS (the same digits the R2 commitments bind), encrypted
+  with fhe.rs's own `try_encrypt_extended` (which returns the full
+  `(u, e1, e2)` witness), proven natively per transport prime
+  (`ct0 = pk0·u + e1 + δ·digit`, `ct1 = pk1·u + e2`), decrypted for real,
+  and recomposed. The digit-form transport (t_share = 2^16, two 62-bit
+  primes with `q ≡ 1+2^17 (mod 2^18)`, below fhe.rs's 2^62 modulus limit)
+  sidesteps the structural impossibility of finding two full-share
+  (`t_share = 2^58`) LF-congruent primes below 2^64. Benchmark at degree
+  8192: 50 instances (5 dealers × 5 digits × 2 primes) proven + folded into
+  one accumulator per prime in ~756s (~15s/instance) — vs Noir C3 at 3.48M
+  constraints/10.76s per proof PLUS recursive aggregation; the decider runs
+  once per track here.
+
+- **ZK C5/C7 decider wrappers** (`decider-circuits/`, nargo beta.22 + bb
+  5.0.0) — the plan §7.1 wrapper core exists and is measured: an Ajtai
+  decider-opening circuit (commitment opening via in-circuit NTT + norm
+  range checks, 58-bit primes inside BN254) and the C5 circuit (3 tracks:
+  openings + norms + `pk0_agg = -a·sk + e` aggregation). C5 at N=1024:
+  2.39M opcodes, 17.9s prove, verified; N=8192 scaling law and the
+  production path (per-track circuits + recursion, §6.2 double-commitment
+  digests for the public inputs) are in `decider-circuits/SPEC.md`.
+
+- **Lattice-estimator certification** (`analysis/`) — the N=8192 set gives
+  **~159-161 bits PQ** for the BFV keys (MATZOV model, full attack suite;
+  N=4096: ~137-139), the `fhe-params` Eq4 rule-of-thumb matched the raw
+  estimator at both sets, and every Ajtai commitment track is
+  **unconditionally binding already at κ=4** (β < q/2 with 32-37 bits of
+  headroom). Smudging (λ=50) is statistical, out of estimator scope. See
+  `analysis/SECURITY.md`.
+
+- **Full P1→P4 flow** (`dkg_fhe_full_flow.rs` + `crates/latticefold/src/vdkg_flow.rs`;
+  opt-in `--features fhe-bridge`, Rust 1.91.1) — the complete protocol on the
+  native N=4096 rings, one run per committee config:
+  - **P1**: R1 dealer contribution proofs (`pk0_i = -a·sk_i + e_i`, smudging
+    noise inside the same short witness) on every channel; the existing Z_Q
+    Shamir + GRS-syndrome R2 proofs; real `fhe.rs` BFV transport (R3 data
+    plane); metadata-bound R4 openings folded per channel — for BOTH the
+    secret-key and the smudging-noise tracks.
+  - **P2**: R5 aggregation — `pk0_agg = Σ pk0_i` with the free Ajtai
+    homomorphism check `Σ Com(w_i) == Com(Σ w_i)`, tied back to the R1
+    relation shape.
+  - **P3**: Ruser — user encryption `ct0 = pk0_agg·u + e0 + Δ·m`,
+    `ct1 = a·u + e1` proven per channel. The encryption randomness is shared
+    across channels (short), so the per-channel ciphertexts are CRT-consistent.
+  - **P4**: R6 decryption shares `d_j = ct0 + ct1·sk_share_j + e_sm_share_j`
+    for the first T parties, proven and folded per channel; Lagrange
+    interpolation per channel; then the P-track R7 relation proves the CRT
+    reconstruction (`u = u_l + s_l·q_l` quotient witnesses + Garner digits)
+    and the decode (`u = Δ·m + e`, bounded positive rounding witness)
+    natively in the 104-bit P ring, recovering the exact user plaintext.
+  - Runs green at N=3/H=3/T=2 (~44s) and N=H=5/T=3 (~94s) on Apple silicon:
+    `./run.sh --example full-flow` from `dkg-fhe/`, or
+    `cargo +1.91.1 run --release --example dkg_fhe_full_flow --features fhe-bridge,parallel`.
+  - Deliberate demo scoping (documented in the module): secrets/errors are
+    sampled with small NON-NEGATIVE coefficients (smudging in `[3N, 6N)`) so
+    the decode witness is a positive bounded integer; the R1↔R2 anchor and
+    Ruser's cross-channel `Com(m)` consistency remain example-side assertions
+    (the repo-wide equality-of-openings gap); the R3 transport is a data plane
+    without a ciphertext-validity proof.
+
+## N=8192 parameter set (matches the Noir `secure-8192` security)
+
+`vdkg_params.rs` carries a validated N=8192 candidate (`N8192Params`,
+`N8192_THRESHOLD_MODULI`, `N8192_RECONSTRUCTION_MODULUS`, share-transport
+chain, `validate_n8192()`) designed to match the security of the
+coordination-trilemma Noir preset (`fhe-params` search: N=8192, t=10^6,
+3×58-bit primes log2 Q ≈ 172, λ=50, B=20, B_chi=1, Eq4 cap
+`log2(q) ≤ log2(B) + (d−75)/37.5 = 220.8`):
+
+- **t = 2^20 = 1_048_576** — the Noir preset's t = 10^6 = 2^6·15625 is
+  structurally incompatible with the LatticeFold congruence (gcd obstruction:
+  `q ≡ 1+2t (mod 4t)` contradicts `q ≡ 1 (mod 2N)`; found by `dkg_params`),
+  so t is rounded up to the covering power of two.
+- **3 × 58-bit primes**, each `q ≡ 2097153 (mod 2^22)` (subsumes
+  `q ≡ 1 (mod 2N)` and `q ≡ 1+2t (mod 4t)`), `log2 Q = 174 ≤ 220.8` (Eq4),
+  Eq1 correctness margin ≈ 8.2 bits (theirs ≈ 6.3) under the same
+  noise accounting (n=10, z=t, λ=50, B=20, B_chi=1).
+- **P**: 176-bit, `> 4Q`, same congruence, chosen of safe form
+  (`P−1 = 2^21·m` with `m` prime) so the Montgomery field gets a certified
+  primitive root (three-limb `Fp192` model).
+- **Share-encryption chain**: plaintext modulus = max(q_l) (their
+  `t_share = max(q_i)` rule), 2 × 60-bit NTT-friendly primes.
+
+**The port is done and the full flow runs on it.** The `stark-rings` fork
+(local sibling repo, `interfold` branch, pushed to `0xjei/stark-rings`)
+carries `models/n8192` (three `Fp64` channel rings + three-limb `Fp192` P,
+radix-2 negacyclic CRT/iCRT at degree 8192, BigUint/BigInt balanced
+decomposition for P); `cyclotomic-rings` exposes `N8192*RingNTT` aliases,
+challenge sets, and Poseidon configs; `fhe_bridge`/`vdkg_flow` are generic
+over `VdkgParams` (`N4096Params`/`N8192Params`), with CRT-native per-channel
+sharing (the plan's native R2 formulation) replacing the u128-limited Z_Q
+sharing on the flow path. Run it:
+
+```bash
+./run.sh --example full-flow -- --params n8192 --n 5 --h 5 --t 3 --recipient 3
+# N=8192, H=5/T=3: green in ~316s (Apple silicon, parallel)
+```
+
+Parameter-search target, not a certification: run a current lattice estimator
+before claiming 128-bit post-quantum security.
+
 ## Mapping to the design's §12 implementation plan
 
 - ✅ **Step 1** — param set + `q_l`/`P` congruence check (`dkg_params.rs`); found

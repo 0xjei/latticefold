@@ -826,6 +826,7 @@ dependencies = [
  "cyclotomic-rings",
  "dhat",
  "fhe",
+ "fhe-math",
  "fhe-traits",
  "humansize",
  "lazy_static",
@@ -1483,7 +1484,6 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 [[package]]
 name = "stark-rings"
 version = "0.0.1-alpha"
-source = "git+https://github.com/0xjei/stark-rings.git?branch=interfold#54edef98bd217ba1a70a861649e6f10d833dcdbe"
 dependencies = [
  "ark-crypto-primitives",
  "ark-ff",
@@ -1507,7 +1507,6 @@ dependencies = [
 [[package]]
 name = "stark-rings-linalg"
 version = "0.0.1-alpha"
-source = "git+https://github.com/0xjei/stark-rings.git?branch=interfold#54edef98bd217ba1a70a861649e6f10d833dcdbe"
 dependencies = [
  "ark-ff",
  "ark-serialize",
@@ -1524,7 +1523,6 @@ dependencies = [
 [[package]]
 name = "stark-rings-poly"
 version = "0.0.1-alpha"
-source = "git+https://github.com/0xjei/stark-rings.git?branch=interfold#54edef98bd217ba1a70a861649e6f10d833dcdbe"
 dependencies = [
  "ark-ff",
  "ark-serialize",

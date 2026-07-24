@@ -429,14 +429,18 @@ the aggregation boundaries where a self-contained ZK artifact is needed.
 | Goldilocks relation examples | Working | No |
 | Degree-16 custom ring | Working for demonstrations | No, demo-only |
 | R2 -> threshold Shamir sharing | H=5/T=3 Z_Q sharing with GRS-syndrome R2 linearization on all channels | Complete for demonstration scale |
-| R3 -> real BFV encryption | Full polynomial committee path working | Yes for full protocol |
+| R3 -> real BFV encryption | Proven: digit-form transport with real fhe.rs `try_encrypt_extended` witnesses, native per-prime proofs, real decryption; 50 instances folded into one accumulator per prime (~15s/instance vs Noir C3 10.76s + recursion) | Complete for demonstration scale |
 | R4 -> commitment opening | Full-committee multi-channel openings, metadata binding, and per-channel NIFS folding working | Complete for demonstration scale |
-| C5 commitment-bound aggregate proof | Missing | Yes for verifiable DKG |
-| C7 commitment-bound final decryption proof | Missing | Yes for verifiable decryption |
+| R1/R5/R6/Ruser native on N=4096 | Wired into `vdkg_flow` (R1 per dealer per channel, R5 homomorphic aggregation, Ruser per channel, R6 proven + folded per channel) | Complete for demonstration scale |
+| Full P1->P4 flow | `dkg_fhe_full_flow` green at N=3/H=3/T=2 and N=H=5/T=3: DKG -> R5 -> user encryption -> folded R6 -> P-track R7 CRT+decode recovers the exact plaintext | Complete for demonstration scale |
+| Lattice-estimator certification | Done (`analysis/`): N=8192 BFV ~159-161 bits PQ, N=4096 ~137-139; commitments unconditionally binding at kappa=4; Eq4 formula cross-validated | Complete for these parameter sets |
+| C5 commitment-bound aggregate proof | R5 done natively (free homomorphic sum); ZK C5 decider-wrapper prototype in `decider-circuits/c5` (3-track openings + aggregation, 2.39M opcodes @ N=1024, proven+verified); production needs digit-limb witnesses, transcript-challenge binding, per-track recursion | Prototype done; production open |
+| C7 commitment-bound final decryption proof | R7 done natively on the P track (interpolation + CRT quotient witnesses + decode); ZK C7 spec'd in `decider-circuits/SPEC.md` | Spec done; wrapper open |
 | Real `fhe.rs` witness adapter | R2 polynomial share transport working behind `fhe-bridge` | Yes for production-oriented execution |
-| Production ring models for q0/q1/q2 and P | All four wired; P carries the native Garner recombination proof | No for demonstrations; interpolation-in-P remains |
+| Production ring models for q0/q1/q2 and P | All four wired; P carries the native Garner recombination proof; R7 decode chain now complete | No for demonstrations |
 | N=4096 engineering candidate | Module and example validated | No, independent certification remains |
-| 128-bit post-quantum certification | Not done | Yes for the security claim |
+| N=8192 parameter set (Noir `secure-8192` security) | Constants + validation in `vdkg_params.rs` (t=2^20, 3x58-bit, log2 Q=174, P 176-bit safe-form); stark-rings `models/n8192` wired on the fork (pushed); full flow green at N=8192 (H=5/T=3, ~316s) via `--params n8192`; estimator-certified ~159-161 bits PQ | No for demonstrations |
+| 128-bit post-quantum certification | Done for the N=8192 parameter set via lattice-estimator (`analysis/SECURITY.md`): ~159-161 bits PQ BFV, commitments binding | Complete for these sets (re-run if parameters change) |
 | Noir C5/C7 circuits | Not in this repository | No for current examples, yes for ZK artifact |
 | On-chain wrapper | Out of scope | No |
 | FHE evaluation correctness | Out of scope in `plan.md` | No |
