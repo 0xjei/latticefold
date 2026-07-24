@@ -4,7 +4,7 @@ use ark_std::{cfg_into_iter, cfg_iter};
 use cyclotomic_rings::rings::SuitableRing;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use stark_rings::OverField;
+use stark_rings::{OverField, PolyRing};
 use stark_rings_linalg::SparseMatrix;
 use stark_rings_poly::polynomials::DenseMultilinearExtension;
 
@@ -88,15 +88,30 @@ impl<NTT: SuitableRing, T: Transcript<NTT>> DecompositionProver<NTT, T>
     }
 }
 
-impl<NTT: OverField, T: Transcript<NTT>> DecompositionVerifier<NTT, T>
+impl<NTT: SuitableRing, T: Transcript<NTT>> DecompositionVerifier<NTT, T>
     for LFDecompositionVerifier<NTT, T>
 {
     fn verify<P: DecompositionParams>(
         cm_i: &LCCCS<NTT>,
         proof: &DecompositionProof<NTT>,
         transcript: &mut impl Transcript<NTT>,
-        _ccs: &CCS<NTT>,
+        ccs: &CCS<NTT>,
     ) -> Result<Vec<LCCCS<NTT>>, DecompositionError> {
+        let expected_v_len = NTT::CoefficientRepresentation::dimension() / NTT::dimension();
+        let expected_x_len = cm_i.x_w.len() + 1;
+        let expected_cm_len = cm_i.cm.len();
+        if proof.x_s.len() != P::K
+            || proof.y_s.len() != P::K
+            || proof.u_s.len() != P::K
+            || proof.v_s.len() != P::K
+            || proof.x_s.iter().any(|x| x.len() != expected_x_len)
+            || proof.y_s.iter().any(|y| y.len() != expected_cm_len)
+            || proof.u_s.iter().any(|u| u.len() != ccs.t)
+            || proof.v_s.iter().any(|v| v.len() != expected_v_len)
+        {
+            return Err(DecompositionError::IncorrectLength);
+        }
+
         let mut lcccs_s = Vec::<LCCCS<NTT>>::with_capacity(P::K);
 
         for (((x, y), u), v) in proof
@@ -260,10 +275,13 @@ impl<NTT: OverField, T: Transcript<NTT>> LFDecompositionVerifier<NTT, T> {
     /// Recomposes `s`, calculating the linear combination `b[0] * s[0][j] + b[1] * s[1][j] + ... + b[s.len() - 1] * s[s.len() - 1][j]`
     /// for each element indexed at `j`.
     pub fn recompose(s: &[Vec<NTT>], b: &[NTT]) -> Result<Vec<NTT>, DecompositionError> {
-        if s.is_empty() {
+        if s.is_empty() || s.len() != b.len() {
             return Err(DecompositionError::RecomposedError);
         }
         let len = s[0].len();
+        if s.iter().any(|s_i| s_i.len() != len) {
+            return Err(DecompositionError::RecomposedError);
+        }
         Ok((0..len)
             .map(|j| {
                 s.iter()
@@ -278,6 +296,12 @@ impl<NTT: OverField, T: Transcript<NTT>> LFDecompositionVerifier<NTT, T> {
         y_s: &[Commitment<NTT>],
         coeffs: &[NTT],
     ) -> Result<Commitment<NTT>, DecompositionError> {
+        if y_s.is_empty()
+            || y_s.len() != coeffs.len()
+            || y_s.iter().any(|y| y.len() != y_s[0].len())
+        {
+            return Err(DecompositionError::RecomposedError);
+        }
         y_s.iter()
             .zip(coeffs)
             .map(|(y_i, b_i)| y_i.clone() * b_i)

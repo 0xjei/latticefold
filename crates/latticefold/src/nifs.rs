@@ -2,6 +2,8 @@
 //!
 //! NIFS = Non Interactive Folding Scheme
 
+use alloc::string::String;
+
 use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{marker::PhantomData, vec::Vec};
@@ -122,6 +124,16 @@ impl<NTT: SuitableRing, P: DecompositionParams, T: TranscriptWithShortChallenges
         ccs: &CCS<NTT>,
     ) -> Result<LCCCS<NTT>, LatticefoldError<NTT>> {
         sanity_check::<NTT, P>(ccs)?;
+
+        if cm_i.x_ccs.len() != ccs.l || acc.cm.len() != cm_i.cm.len() {
+            return Err(CSError::LengthsNotEqual(
+                String::from("accumulator/instance commitment or public-input length"),
+                String::from("CCS shape"),
+                acc.cm.len().max(cm_i.cm.len()),
+                ccs.l,
+            )
+            .into());
+        }
 
         absorb_public_input::<NTT>(acc, cm_i, transcript);
 

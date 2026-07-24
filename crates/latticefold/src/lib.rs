@@ -14,6 +14,10 @@ pub mod decomposition_parameters;
 pub mod nifs;
 pub mod transcript;
 pub mod utils;
+pub mod vdkg_params;
+
+#[cfg(feature = "fhe-bridge")]
+pub mod fhe_bridge;
 
 #[doc(hidden)]
 mod ark_base {

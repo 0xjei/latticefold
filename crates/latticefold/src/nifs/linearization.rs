@@ -1,5 +1,5 @@
 use cyclotomic_rings::rings::SuitableRing;
-use stark_rings::OverField;
+use stark_rings::{OverField, PolyRing};
 use stark_rings_poly::mle::DenseMultilinearExtension;
 
 pub use self::structs::*;
@@ -267,6 +267,13 @@ impl<NTT: SuitableRing, T: Transcript<NTT>> LinearizationVerifier<NTT, T>
         transcript: &mut impl Transcript<NTT>,
         ccs: &CCS<NTT>,
     ) -> Result<LCCCS<NTT>, LinearizationError<NTT>> {
+        let expected_v_len = NTT::CoefficientRepresentation::dimension() / NTT::dimension();
+        if cm_i.x_ccs.len() != ccs.l || proof.v.len() != expected_v_len || proof.u.len() != ccs.t {
+            return Err(LinearizationError::ParametersError(String::from(
+                "malformed linearization proof or CCS statement length",
+            )));
+        }
+
         // Step 1: Generate the beta challenges.
         let beta_s = transcript.squeeze_beta_challenges(ccs.s);
 

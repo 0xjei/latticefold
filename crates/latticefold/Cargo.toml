@@ -16,6 +16,7 @@ parallel = [
     "stark-rings-poly/parallel",
 ]
 getrandom = ["ark-std/getrandom"]
+fhe-bridge = ["dep:fhe", "dep:fhe-rand", "dep:fhe-traits"]
 
 # dev-only
 dhat-heap = []
@@ -34,6 +35,9 @@ stark-rings = { workspace = true }
 stark-rings-linalg = { workspace = true }
 stark-rings-poly = { workspace = true }
 thiserror = { workspace = true }
+fhe = { workspace = true, optional = true }
+fhe-rand = { workspace = true, optional = true }
+fhe-traits = { workspace = true, optional = true }
 
 [build-dependencies]
 proc-macro2 = { workspace = true }
@@ -91,3 +95,122 @@ harness = false
 [[bench]]
 name = "e2e"
 harness = false
+
+# --- DKG / interfold example suite (moved under examples/interfold/) ---
+# Explicitly registered because cargo only auto-discovers examples/*.rs.
+
+[[example]]
+name = "dkg_chain"
+path = "examples/interfold/composition/dkg_chain.rs"
+
+[[example]]
+name = "dkg_cheater_isolation"
+path = "examples/interfold/composition/dkg_cheater_isolation.rs"
+
+[[example]]
+name = "dkg_decider_statement"
+path = "examples/interfold/composition/dkg_decider_statement.rs"
+
+[[example]]
+name = "dkg_double_commitment"
+path = "examples/interfold/composition/dkg_double_commitment.rs"
+
+[[example]]
+name = "dkg_ruser_consistency"
+path = "examples/interfold/composition/dkg_ruser_consistency.rs"
+
+[[example]]
+name = "dkg_wide_smudging"
+path = "examples/interfold/composition/dkg_wide_smudging.rs"
+
+[[example]]
+name = "dkg_fhe_committee_r4"
+path = "examples/interfold/fhe/dkg_fhe_committee_r4.rs"
+
+[[example]]
+name = "dkg_fhe_multichannel_r4"
+path = "examples/interfold/fhe/dkg_fhe_multichannel_r4.rs"
+
+[[example]]
+name = "dkg_fhe_r2_r4"
+path = "examples/interfold/fhe/dkg_fhe_r2_r4.rs"
+
+[[example]]
+name = "dkg_fhe_r4"
+path = "examples/interfold/fhe/dkg_fhe_r4.rs"
+
+[[example]]
+name = "dkg_fhe_share"
+path = "examples/interfold/fhe/dkg_fhe_share.rs"
+
+[[example]]
+name = "dkg_n4096_params"
+path = "examples/interfold/fhe/dkg_n4096_params.rs"
+
+[[example]]
+name = "dkg_p_reconstruction"
+path = "examples/interfold/fhe/dkg_p_reconstruction.rs"
+
+[[example]]
+name = "dkg_r0"
+path = "examples/interfold/relations/dkg_r0.rs"
+
+[[example]]
+name = "dkg_r1"
+path = "examples/interfold/relations/dkg_r1.rs"
+
+[[example]]
+name = "dkg_r1_native"
+path = "examples/interfold/relations/dkg_r1_native.rs"
+
+[[example]]
+name = "dkg_r2"
+path = "examples/interfold/relations/dkg_r2.rs"
+
+[[example]]
+name = "dkg_r3_ruser"
+path = "examples/interfold/relations/dkg_r3_ruser.rs"
+
+[[example]]
+name = "dkg_r4"
+path = "examples/interfold/relations/dkg_r4.rs"
+
+[[example]]
+name = "dkg_r5"
+path = "examples/interfold/relations/dkg_r5.rs"
+
+[[example]]
+name = "dkg_r6"
+path = "examples/interfold/relations/dkg_r6.rs"
+
+[[example]]
+name = "dkg_r7"
+path = "examples/interfold/relations/dkg_r7.rs"
+
+[[example]]
+name = "dkg_r7_circuit"
+path = "examples/interfold/relations/dkg_r7_circuit.rs"
+
+[[example]]
+name = "dkg_r7_crt"
+path = "examples/interfold/relations/dkg_r7_crt.rs"
+
+[[example]]
+name = "dkg_r7_decode"
+path = "examples/interfold/relations/dkg_r7_decode.rs"
+
+[[example]]
+name = "dkg_bench_folding"
+path = "examples/interfold/ring/dkg_bench_folding.rs"
+
+[[example]]
+name = "dkg_params"
+path = "examples/interfold/ring/dkg_params.rs"
+
+[[example]]
+name = "dkg_ring_model"
+path = "examples/interfold/ring/dkg_ring_model.rs"
+
+[[example]]
+name = "dkg_ring_ntt"
+path = "examples/interfold/ring/dkg_ring_ntt.rs"

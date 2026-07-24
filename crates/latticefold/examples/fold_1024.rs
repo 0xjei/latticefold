@@ -1,28 +1,35 @@
-//! Sequential IVC-style folding of 1024 Ajtai-committed steps.
+//! Sequential IVC-style folding of 1024 Ajtai-committed steps over a *real*
+//! arithmetic step circuit.
 //!
-//! Each "step" is a degree-three CCS instance whose witness is committed with
-//! the Ajtai commitment scheme. Starting from a linearized accumulator, we fold
-//! the incoming committed instance into the accumulator 1024 times in sequence,
-//! threading a single Fiat-Shamir transcript through the whole chain (exactly as
-//! an IVC prover would). After each fold the corresponding `NIFSVerifier` step is
-//! run so the chain is verified end-to-end.
+//! The step relation is the canonical cubic constraint
 //!
-//! This is the native LatticeFold verification path (there is no on-chain
-//! decider in this codebase — the final artifact is a lattice proof verified in
-//! Rust).
+//!     y = x^3 + x + 5
+//!
+//! (the same R1CS used in Vitalik's QAP write-up), expressed here as the
+//! rank-1 constraint system returned by `get_test_r1cs` and converted to a
+//! folding-ready CCS with `CCS::from_r1cs_padded`. Every step:
+//!
+//!   1. picks a real input `x`, computes the satisfying assignment
+//!      `z = (x, 1, y, x^2, x^3, x^3 + x)` and checks `ccs.check_relation(z)`,
+//!   2. commits the step witness with the Ajtai commitment scheme,
+//!   3. folds the resulting committed instance into the running accumulator via
+//!      `NIFSProver`, and verifies that fold step with `NIFSVerifier`.
+//!
+//! A single Fiat-Shamir transcript is threaded through the whole chain, exactly
+//! as an IVC prover/verifier would. This is the native LatticeFold verification
+//! path (there is no on-chain decider in this codebase).
 //!
 //! Run with:
 //!   cargo run --release --example fold_1024
 
-use std::{fmt::Debug, time::Instant};
+use std::time::Instant;
 
 use ark_serialize::{CanonicalSerialize, Compress};
-use ark_std::UniformRand;
-use cyclotomic_rings::rings::{GoldilocksChallengeSet, GoldilocksRingNTT, SuitableRing};
+use cyclotomic_rings::rings::{GoldilocksChallengeSet, GoldilocksRingNTT};
 use latticefold::{
     arith::{
-        ccs::get_test_dummy_degree_three_ccs_non_scalar, r1cs::get_test_dummy_z_split_ntt, Arith,
-        Witness, CCCS, CCS,
+        r1cs::{get_test_z_split, to_F_matrix, R1CS},
+        Arith, Witness, CCCS, CCS,
     },
     commitment::AjtaiCommitmentScheme,
     decomposition_parameters::DecompositionParams,
@@ -49,56 +56,69 @@ impl DecompositionParams for DP {
     const K: usize = 15;
 }
 
-const X_LEN: usize = 1;
+/// The cubic R1CS `y = x^3 + x + 5` has: 1 public input (x), the constant, and
+/// 4 witness wires => wit_len = 4. The Ajtai matrix commits `wit_len * L` ring
+/// elements.
 const WIT_LEN: usize = 4;
-const KAPPA: usize = 4;
 const N: usize = WIT_LEN * DP::L;
+const KAPPA: usize = 4;
 
 /// Number of sequential folding steps.
 const STEPS: usize = 1024;
 
-// ---- Step-circuit / instance generation ------------------------------------
+/// The real R1CS for `y = x^3 + x + 5` (Vitalik's QAP example), matching the
+/// `z = (io, 1, w)` assignment produced by `get_test_z_split`.
+#[allow(non_snake_case)]
+fn cubic_r1cs() -> R1CS<RqNTT> {
+    let A = to_F_matrix::<RqNTT>(vec![
+        vec![1, 0, 0, 0, 0, 0],
+        vec![0, 0, 0, 1, 0, 0],
+        vec![1, 0, 0, 0, 1, 0],
+        vec![0, 5, 0, 0, 0, 1],
+    ]);
+    let B = to_F_matrix::<RqNTT>(vec![
+        vec![1, 0, 0, 0, 0, 0],
+        vec![1, 0, 0, 0, 0, 0],
+        vec![0, 1, 0, 0, 0, 0],
+        vec![0, 1, 0, 0, 0, 0],
+    ]);
+    let C = to_F_matrix::<RqNTT>(vec![
+        vec![0, 0, 0, 1, 0, 0],
+        vec![0, 0, 0, 0, 1, 0],
+        vec![0, 0, 0, 0, 0, 1],
+        vec![0, 0, 1, 0, 0, 0],
+    ]);
+    R1CS::<RqNTT> { l: 1, A, B, C }
+}
 
-/// Build one Ajtai-committed CCS step instance (the incoming `cm_i` + witness),
-/// plus the fixed CCS and commitment scheme shared by every step.
-fn gen_step<P: DecompositionParams, R: Clone + UniformRand + Debug + SuitableRing>(
-    x_len: usize,
-    n: usize,
-    wit_len: usize,
-    r1cs_rows: usize,
-    kappa: usize,
-) -> (CCCS<R>, Witness<R>, CCS<R>, AjtaiCommitmentScheme<R>) {
-    let mut rng = ark_std::test_rng();
+/// Build the committed CCCS instance + witness for one step with input `x`.
+fn step_instance(
+    x: usize,
+    ccs: &CCS<RqNTT>,
+    scheme: &AjtaiCommitmentScheme<RqNTT>,
+) -> (CCCS<RqNTT>, Witness<RqNTT>) {
+    // z = (one, x_ccs, w_ccs) for the relation y = x^3 + x + 5.
+    let (one, x_ccs, w_ccs) = get_test_z_split::<RqNTT>(x);
 
-    let new_r1cs_rows = if P::L == 1 && (wit_len > 0 && (wit_len & (wit_len - 1)) == 0) {
-        r1cs_rows - 2
-    } else {
-        r1cs_rows
-    };
+    // Sanity: the assignment really satisfies the constraint system.
+    // LatticeFold reconstructs z as [statement, one, witness] (see
+    // `Arith::get_z_vector`), matching the (io, 1, w) layout of get_test_z.
+    let mut z = x_ccs.clone();
+    z.push(one);
+    z.extend(w_ccs.clone());
+    ccs.check_relation(&z)
+        .expect("step assignment does not satisfy y = x^3 + x + 5");
 
-    let (one, x_ccs, w_ccs) = get_test_dummy_z_split_ntt::<R>(x_len, wit_len);
-
-    let mut z = vec![one];
-    z.extend(&x_ccs);
-    z.extend(&w_ccs);
-
-    let ccs: CCS<R> =
-        get_test_dummy_degree_three_ccs_non_scalar::<R>(&z, x_len, n, wit_len, P::L, new_r1cs_rows);
-    ccs.check_relation(&z).expect("step CCS relation invalid!");
-
-    let scheme: AjtaiCommitmentScheme<R> = AjtaiCommitmentScheme::rand(kappa, n, &mut rng);
-    let wit: Witness<R> = Witness::from_w_ccs::<P>(w_ccs);
-
-    let cm_i: CCCS<R> = CCCS {
-        cm: wit.commit::<P>(&scheme).unwrap(),
+    let wit = Witness::from_w_ccs::<DP>(w_ccs);
+    let cm_i = CCCS {
+        cm: wit.commit::<DP>(scheme).unwrap(),
         x_ccs,
     };
-
-    (cm_i, wit, ccs, scheme)
+    (cm_i, wit)
 }
 
 fn main() {
-    println!("LatticeFold sequential folding — {STEPS} Ajtai-committed steps");
+    println!("LatticeFold sequential folding — {STEPS} steps of y = x^3 + x + 5");
     println!("Ring: Goldilocks | KAPPA={KAPPA} WIT_LEN={WIT_LEN} N={N}");
     println!(
         "Decomposition: B={} L={} B_SMALL={} K={}",
@@ -108,24 +128,22 @@ fn main() {
         DP::K
     );
 
-    let r1cs_rows = X_LEN + WIT_LEN + 1;
+    // Fixed real step circuit (cubic R1CS -> folding-ready CCS) and Ajtai scheme.
+    let ccs: CCS<RqNTT> = CCS::from_r1cs_padded(cubic_r1cs(), N, DP::L);
+    let mut rng = ark_std::test_rng();
+    let scheme: AjtaiCommitmentScheme<RqNTT> = AjtaiCommitmentScheme::rand(KAPPA, N, &mut rng);
 
-    // Fixed step circuit + commitment scheme, and the (repeated) incoming instance.
-    let (cm_i, wit_i, ccs, scheme) =
-        gen_step::<DP, RqNTT>(X_LEN, N, WIT_LEN, r1cs_rows, KAPPA);
+    // A small varying input per step keeps the cubic arithmetic bounded while
+    // producing genuinely distinct real instances.
+    let input_at = |step: usize| (step % 250) + 1;
 
-    // Bootstrap the accumulator by linearizing an initial committed instance.
-    let init_w: Vec<RqNTT> = (0..WIT_LEN).map(|i| RqNTT::from(i as u64)).collect();
-    let mut w_acc = Witness::from_w_ccs::<DP>(init_w);
-
+    // Bootstrap the accumulator by linearizing the first committed instance.
+    let (cm_0, wit_0) = step_instance(input_at(0), &ccs, &scheme);
+    let mut w_acc = wit_0;
     let mut bootstrap_transcript = PoseidonTranscript::<RqNTT, CS>::default();
-    let (mut acc, _) = LFLinearizationProver::<_, T>::prove(
-        &cm_i,
-        &w_acc,
-        &mut bootstrap_transcript,
-        &ccs,
-    )
-    .expect("failed to bootstrap accumulator");
+    let (mut acc, _) =
+        LFLinearizationProver::<_, T>::prove(&cm_0, &w_acc, &mut bootstrap_transcript, &ccs)
+            .expect("failed to bootstrap accumulator");
 
     // One transcript per party, threaded through the entire IVC chain.
     let mut prover_transcript = PoseidonTranscript::<RqNTT, CS>::default();
@@ -135,7 +153,10 @@ fn main() {
     let start = Instant::now();
     let mut last_proof = None;
 
-    for step in 0..STEPS {
+    // Step 0 is already represented by the bootstrap accumulator.
+    for step in 1..STEPS {
+        let (cm_i, wit_i) = step_instance(input_at(step), &ccs, &scheme);
+
         let (new_acc, new_w_acc, proof) = NIFSProver::<RqNTT, DP, T>::prove(
             &acc,
             &w_acc,
@@ -147,7 +168,6 @@ fn main() {
         )
         .expect("folding prover failed");
 
-        // Verify this fold step against the same accumulator/instance.
         let verified_acc = NIFSVerifier::<RqNTT, DP, T>::verify(
             &acc,
             &cm_i,
@@ -157,7 +177,6 @@ fn main() {
         )
         .expect("folding verifier failed");
 
-        // Prover and verifier must agree on the folded accumulator.
         assert_eq!(
             new_acc, verified_acc,
             "prover/verifier accumulator mismatch at step {step}"
