@@ -131,6 +131,8 @@ def main():
         prover.append(f"cm_{t} = {fmt_nested(cm)}")
         prover.append(f"a_crs_ntt_{t} = {fmt(a_crs_ntt)}")
         prover.append(f"pk0_agg_{t} = {fmt(pk0_agg)}")
+        r_lin = [(t * 1000 + i * 97 + 5) % q for i in range(4)]
+        prover.append(f"r_lin_{t} = {fmt(r_lin)}")
 
     with open(f"{out_dir}/src/roots.nr", "w") as f:
         f.write("\n".join(roots_src) + "\n")

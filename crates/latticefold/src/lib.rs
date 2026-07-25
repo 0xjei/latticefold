@@ -15,6 +15,7 @@ pub mod nifs;
 pub mod transcript;
 pub mod utils;
 pub mod vdkg_params;
+pub mod wrapper_challenge;
 
 #[cfg(feature = "fhe-bridge")]
 pub mod fhe_bridge;

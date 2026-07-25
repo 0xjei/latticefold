@@ -77,7 +77,13 @@ fn verify_ntt(m: ModU128, w: [Field; 1024], w_ntt: [Field; 1024], r: Field, omeg
     assert(lhs == rhs);
 }
 
-/// One track: opening + norms + R1 aggregation row.
+/// One track: opening + norms + R1 aggregation row + evaluation consistency.
+///
+/// The evaluation-consistency check is the decider's third component: the
+/// R1 relation (its only live row, `pk0_agg + a*sk - e = 0`) evaluated at
+/// the linearization challenge point `r_lin` — an off-circuit Fiat–Shamir
+/// challenge replayed from the folding transcript's digest (plan §7.1), so
+/// no in-circuit hashing is needed.
 fn track(
     w: [[Field; 1024]; 3],
     w_ntts: [[Field; 1024]; 3],
@@ -85,6 +91,7 @@ fn track(
     cm: [[Field; 1024]; 4],
     a_crs_ntt: [Field; 1024],
     pk0_agg: [Field; 1024],
+    r_lin: [Field; 4],
     q: u64,
     psi: Field,
     omega: Field,
@@ -125,6 +132,20 @@ fn track(
         rhs = m.add(rhs, term);
     }
     assert(lhs == rhs);
+
+    // Evaluation consistency at the linearization challenge point r_lin:
+    // eq(0000, r_lin)^2 * (pk0_agg + a*sk - e) == 0 per coefficient, where
+    // eq(0000, r_lin) = prod_k (1 - r_lin[k]).
+    let mut eq0: Field = 1;
+    for k in 0..4 {
+        eq0 = m.mul_mod(eq0, m.sub(1, r_lin[k]));
+    }
+    let eq0_sq = m.mul_mod(eq0, eq0);
+    for k in 0..1024 {
+        let prod = m.mul_mod(a_crs_ntt[k], w_ntts[0][k]);
+        let row_val = m.sub(m.sub(w_ntts[1][k], prod), pk0_agg[k]);
+        assert(m.mul_mod(eq0_sq, row_val) == 0);
+    }
 }
 
 unconstrained fn compute_ntt(a: [Field; 1024], psi: Field, omega: Field, q: u64) -> [Field; 1024] {
@@ -185,16 +206,19 @@ fn main(
     cm_0: [[Field; 1024]; 4],
     a_crs_ntt_0: [Field; 1024],
     pk0_agg_0: pub [Field; 1024],
+    r_lin_0: pub [Field; 4],
     w_1: [[Field; 1024]; 3],
     a_in_1: [[Field; 1024]; 12],
     cm_1: [[Field; 1024]; 4],
     a_crs_ntt_1: [Field; 1024],
     pk0_agg_1: pub [Field; 1024],
+    r_lin_1: pub [Field; 4],
     w_2: [[Field; 1024]; 3],
     a_in_2: [[Field; 1024]; 12],
     cm_2: [[Field; 1024]; 4],
     a_crs_ntt_2: [Field; 1024],
     pk0_agg_2: pub [Field; 1024],
+    r_lin_2: pub [Field; 4],
     r: pub Field,
 ) {
     // Safety: every NTT output is verified against its coefficients in
@@ -214,7 +238,7 @@ fn main(
         unsafe { compute_ntt(w_2[1], roots::PSI_2, roots::OMEGA_2, roots::Q_2) },
         unsafe { compute_ntt(w_2[2], roots::PSI_2, roots::OMEGA_2, roots::Q_2) },
     ];
-    track(w_0, w_ntts_0, a_in_0, cm_0, a_crs_ntt_0, pk0_agg_0, roots::Q_0, roots::PSI_0, roots::OMEGA_0, r);
-    track(w_1, w_ntts_1, a_in_1, cm_1, a_crs_ntt_1, pk0_agg_1, roots::Q_1, roots::PSI_1, roots::OMEGA_1, r);
-    track(w_2, w_ntts_2, a_in_2, cm_2, a_crs_ntt_2, pk0_agg_2, roots::Q_2, roots::PSI_2, roots::OMEGA_2, r);
+    track(w_0, w_ntts_0, a_in_0, cm_0, a_crs_ntt_0, pk0_agg_0, r_lin_0, roots::Q_0, roots::PSI_0, roots::OMEGA_0, r);
+    track(w_1, w_ntts_1, a_in_1, cm_1, a_crs_ntt_1, pk0_agg_1, r_lin_1, roots::Q_1, roots::PSI_1, roots::OMEGA_1, r);
+    track(w_2, w_ntts_2, a_in_2, cm_2, a_crs_ntt_2, pk0_agg_2, r_lin_2, roots::Q_2, roots::PSI_2, roots::OMEGA_2, r);
 }

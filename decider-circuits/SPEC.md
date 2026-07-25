@@ -28,6 +28,39 @@ point with Horner):
 production derives it by hashing the public statement in-circuit (bounded
 hashing, plan §10).
 
+### Off-circuit Fiat–Shamir (current design, plan §7.1/§11)
+
+**Ajtai commitments substitute for in-circuit hashing of the challenge.**
+The Schwartz–Zippel challenge `r` and the linearization point `r_lin` are
+derived **off-circuit** from the published commitment digests (§6.2 double
+commitments — 1–4 field elements each), commit-then-challenge:
+
+1. Prover publishes the digests of every quantity entering the wrapper
+   (folded accumulators, aggregate key, committee/parameter domain).
+2. `r = Poseidon(tag, digests…)` is derived off-circuit
+   (`crates/latticefold/src/wrapper_challenge.rs`) — unpredictable to the
+   prover at commitment time (MSIS binding), so the SZ checks are sound with
+   **zero in-circuit hashing**.
+3. The on-chain verifier recomputes `r` from the digests (one hash over a
+   handful of field elements) and checks it equals the wrapper's public
+   input.
+
+This is exactly the plan's stance: Ajtai replaces hash commitments
+(consistency links free), while Fiat–Shamir stays native/off-circuit
+(LatticeFold's Poseidon transcript for the tracks; digest-derived for the
+wrapper) — in-circuit hashing would only be needed if the wrapper had to
+re-derive full folding transcripts, which the §7.1 split avoids.
+
+### The decider's three checks (all now present in `c5_sz`)
+
+1. **Commitment opening** (`cm = A·w_ntt`, Horner-at-r).
+2. **Norm bound** (balanced-digit range checks).
+3. **Evaluation consistency**: the R1 relation row
+   `pk0_agg + a·sk − e = 0` evaluated at the linearization challenge point
+   `r_lin` as `eq(0000, r_lin)² · row_val = 0` per coefficient — the
+   decider's check that the folded instance satisfies its relation at the
+   folding track's own challenge (replayed off-circuit).
+
 ### Why the naive in-circuit NTT died (compile-time root causes)
 
 1. **Bit-reverse permutation.** Conditional array swaps with data-dependent
@@ -51,7 +84,8 @@ hashing, plan §10).
 | `c5` † | in-circuit NTT (3 tracks) | 1024 | 2,389,356 | 75s | 17.9s | 10.2 KB |
 | `c7` | integer identities (interp+CRT+decode) | 1024 | 319,488 | 2.4s | 2.7s | 10.0 KB |
 | **`ajtai_opening_sz`** | **Schwartz–Zippel** | **8192** | **2,803,935** | **93s** | **12.3s** | **9.9 KB** |
-| **`c5_sz`** | **Schwartz–Zippel (3 tracks)** | **1024** | **1,127,984** | **36s** | **5.2s** | **9.5 KB** |
+| **`c5_sz`** | **Schwartz–Zippel (3 tracks, opening only)** | **1024** | **1,127,984** | **36s** | **5.2s** | **9.5 KB** |
+| **`c5_sz`** | **SZ + evaluation consistency (3 tracks)** | **1024** | **1,164,956** | **39s** | **5.3s** | **9.5 KB** |
 
 † superseded intermediate experiments (removed from the tree; numbers kept
 for the record — the in-circuit-NTT design at N=8192 never finished
@@ -101,14 +135,13 @@ digests is a required production change.
 
 ## Missing for production
 
-1. **Fiat–Shamir challenge in-circuit** (bounded Poseidon over the public
-   statement; `r` is currently a public input).
-2. **Real vectors from the Rust side** (the folded accumulators of
-   `vdkg_flow.rs`) — current vectors are Python-generated with identical
-   shapes.
-3. **Digit-limb witnesses** (m=15 per track) replacing the m=3 prototype.
-4. **Per-track circuits + UltraHonk recursion** for the ≥25M-opcode
+1. **Real vectors from the Rust side** (the folded accumulators of
+   `vdkg_flow.rs` and their §6.2 digests, with `r`/`r_lin` derived by
+   `wrapper_challenge.rs`) — current vectors are Python-generated with
+   identical shapes and a fixed challenge.
+2. **Digit-limb witnesses** (m=15 per track) replacing the m=3 prototype.
+3. **Per-track circuits + UltraHonk recursion** for the ≥25M-opcode
    production C5, and the P-track limb arithmetic for the C7 decider opening.
-5. **Solidity verifier + gas measurement** on the final circuits (`bb
+4. **Solidity verifier + gas measurement** on the final circuits (`bb
    write_solidity_verifier` works; measured gas needs a Foundry run — the
    article's artifacts were 3.2-3.8M gas for reference).
