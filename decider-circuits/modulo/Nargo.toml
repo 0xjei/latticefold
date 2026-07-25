@@ -1,6 +1,6 @@
 [package]
-name = "c5"
-type = "bin"
+name = "modulo"
+type = "lib"
 compiler_version = ">=1.0.0"
 
 [dependencies]

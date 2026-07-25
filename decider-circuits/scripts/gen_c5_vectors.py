@@ -60,9 +60,23 @@ def ntt(values, psi, q, n):
         length <<= 1
     return a
 
+def bit_reverse(values, n):
+    out = list(values)
+    j = 0
+    for i in range(1, n):
+        bit = n >> 1
+        while j & bit:
+            j ^= bit
+            bit >>= 1
+        j |= bit
+        if i < j:
+            out[i], out[j] = out[j], out[i]
+    return out
+
 def main():
     out_dir = sys.argv[1]
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 1024
+    permute = int(sys.argv[3]) if len(sys.argv) > 3 else 1
     levels = n.bit_length() - 1
 
     seed = 777
@@ -82,9 +96,12 @@ def main():
         while length <= n:
             steps.append(pow(omega, n // length, q))
             length <<= 1
+        # The circuits use the DIF butterfly (length from n down to 2).
+        dif_steps = list(reversed(steps))
         roots_src.append(f"pub global Q_{t}: u64 = {q};")
         roots_src.append(f"pub global PSI_{t}: Field = {psi};")
-        roots_src.append(f"pub global STEPS_{t}: [Field; {levels}] = {steps};")
+        roots_src.append(f"pub global OMEGA_{t}: Field = {omega};")
+        roots_src.append(f"pub global STEPS_{t}: [Field; {levels}] = {dif_steps};")
 
         w = [[(k * 5 + j * 3 + t + 1) % 9 - 4 for k in range(n)] for j in range(3)]
         w_ntt = [ntt(wj, psi, q, n) for wj in w]
@@ -94,6 +111,14 @@ def main():
         a_crs = [rnd(q) for _ in range(n)]  # coefficient form
         a_crs_ntt = ntt(a_crs, psi, q, n)
         pk0_agg = [(q - (a_crs_ntt[k] * w_ntt[0][k] % q) + w_ntt[1][k]) % q for k in range(n)]
+
+        # Permute off-circuit only for the in-circuit-permutation design
+        # (permute=1); the Schwartz–Zippel design uses natural NTT order.
+        if permute:
+            A = [[bit_reverse(row, n) for row in Ai] for Ai in A]
+            cm = [bit_reverse(row, n) for row in cm]
+            a_crs_ntt = bit_reverse(a_crs_ntt, n)
+            pk0_agg = bit_reverse(pk0_agg, n)
 
         def fmt(v):
             return "[" + ", ".join(str(x) for x in v) + "]"

@@ -1,6 +1,7 @@
 [package]
-name = "ajtai_opening_1024"
+name = "ajtai_opening_sz"
 type = "bin"
 compiler_version = ">=1.0.0"
 
 [dependencies]
+modulo = { path = "../modulo" }

@@ -226,13 +226,18 @@ equality-of-openings protocol is still required.
   once per track here.
 
 - **ZK C5/C7 decider wrappers** (`decider-circuits/`, nargo beta.22 + bb
-  5.0.0) — the plan §7.1 wrapper core exists and is measured: an Ajtai
-  decider-opening circuit (commitment opening via in-circuit NTT + norm
-  range checks, 58-bit primes inside BN254) and the C5 circuit (3 tracks:
-  openings + norms + `pk0_agg = -a·sk + e` aggregation). C5 at N=1024:
-  2.39M opcodes, 17.9s prove, verified; N=8192 scaling law and the
-  production path (per-track circuits + recursion, §6.2 double-commitment
-  digests for the public inputs) are in `decider-circuits/SPEC.md`.
+  5.0.0) — the plan §7.1 wrapper core exists and is measured. Final design
+  (Schwartz–Zippel, the same trick as the production `circuits/`): witness
+  NTTs are computed unconstrained and verified at one random point via a
+  geometric-series identity with one Montgomery-batch inversion; the Ajtai
+  opening check is a Horner evaluation of the error vector. Measured:
+  `ajtai_opening_sz` at **N=8192: 2.80M opcodes, 93s compile, 12.3s prove,
+  verified**; `c5_sz` (3 tracks) 1.13M opcodes at N=1024, 5.2s prove;
+  `c7` (interpolation + CRT + decode as integer identities) 319k opcodes at
+  N=1024, 2.7s prove. The compile-time investigation (bit-reverse O(N²)
+  permutation blowup, DIT-vs-DIF, u128-cast reduction cost) and the
+  production path (per-track circuits + recursion, §6.2 digests) are in
+  `decider-circuits/SPEC.md`.
 
 - **Lattice-estimator certification** (`analysis/`) — the N=8192 set gives
   **~159-161 bits PQ** for the BFV keys (MATZOV model, full attack suite;
