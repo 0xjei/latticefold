@@ -249,8 +249,7 @@ equality-of-openings protocol is still required.
 
 - **Full P1→P4 flow** (`dkg_fhe_full_flow.rs` + `crates/latticefold/src/vdkg_flow.rs`;
   opt-in `--features fhe-bridge`, Rust 1.91.1) — the complete protocol on the
-  native N=4096 rings, one run per committee config:
-  - **P1**: R1 dealer contribution proofs (`pk0_i = -a·sk_i + e_i`, smudging
+  native N=4096 rings, one run per committee config:  - **P1**: R1 dealer contribution proofs (`pk0_i = -a·sk_i + e_i`, smudging
     noise inside the same short witness) on every channel; the existing Z_Q
     Shamir + GRS-syndrome R2 proofs; real `fhe.rs` BFV transport (R3 data
     plane); metadata-bound R4 openings folded per channel — for BOTH the
@@ -270,12 +269,24 @@ equality-of-openings protocol is still required.
   - Runs green at N=3/H=3/T=2 (~44s) and N=H=5/T=3 (~94s) on Apple silicon:
     `./run.sh --example full-flow` from `dkg-fhe/`, or
     `cargo +1.91.1 run --release --example dkg_fhe_full_flow --features fhe-bridge,parallel`.
-  - Deliberate demo scoping (documented in the module): secrets/errors are
-    sampled with small NON-NEGATIVE coefficients (smudging in `[3N, 6N)`) so
-    the decode witness is a positive bounded integer; the R1↔R2 anchor and
+  - Deliberate demo scoping (documented in the module): the R1↔R2 anchor and
     Ruser's cross-channel `Com(m)` consistency remain example-side assertions
     (the repo-wide equality-of-openings gap); the R3 transport is a data plane
     without a ciphertext-validity proof.
+
+  **Production distributions (current).** Witnesses are now sampled with the
+  pinned fhe.rs TRBFV distributions (`crates/latticefold/src/samples.rs`):
+  ternary `sk` (`SecretKey::random`), CBD errors (`Poly::small`), and
+  TRBFV smudging noise at λ=50 via
+  `generate_smudging_error_with_participant_count` (wide: ~2^74 at z=1 —
+  committed in R1 as 6 balanced base-2^15 limbs per plan §9.2, shared as
+  per-channel residues). The R7 decode uses the centered-noise form
+  `u = Δ·m + e` with `e ∈ (−Δ/2, Δ/2)` signed (an early shifted-scalar
+  variant only enforced coefficient 0 — caught and fixed). The Ajtai
+  matrices are a proper domain-separated CRS
+  (`AjtaiCommitmentScheme::from_domain(tag, ...)`, Poseidon-squeezed) instead
+  of per-run randomness. Runs green at N=8192 (H=3/T=2, ~22 min with the
+  limb-heavy R7) and N=4096.
 
 ## N=8192 parameter set (matches the Noir `secure-8192` security)
 

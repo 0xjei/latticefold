@@ -68,12 +68,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (s0_ccs, s0_scheme) = {
         let pk0 = n8192_s0::coeffs_to_ntt(&pk0_rows[0])?;
         let pk1 = n8192_s0::coeffs_to_ntt(&pk1_rows[0])?;
-        n8192_s0::r3_context(&pk0, &pk1, &mut rng)
+        n8192_s0::r3_context(&pk0, &pk1)
     };
     let (s1_ccs, s1_scheme) = {
         let pk0 = n8192_s1::coeffs_to_ntt(&pk0_rows[1])?;
         let pk1 = n8192_s1::coeffs_to_ntt(&pk1_rows[1])?;
-        n8192_s1::r3_context(&pk0, &pk1, &mut rng)
+        n8192_s1::r3_context(&pk0, &pk1)
     };
 
     let start_all = std::time::Instant::now();

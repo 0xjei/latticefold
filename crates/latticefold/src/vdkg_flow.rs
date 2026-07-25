@@ -52,7 +52,7 @@ use cyclotomic_rings::rings::{
     N8192Q1Field, N8192Q1RingNTT, N8192Q1RingPoly, N8192Q2ChallengeSet, N8192Q2Field,
     N8192Q2RingNTT, N8192Q2RingPoly,
 };
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint};
 use stark_rings::{
     cyclotomic_ring::{CRT, ICRT},
     PolyRing,
@@ -66,6 +66,7 @@ use crate::{
     fhe_bridge::{
         generate_channel_sharing, ChannelSharings, CommitteeConfig, ShareTransport,
     },
+    samples::{balanced_limbs, sample_dealer, smudging_max_bits, DealerSamples},
     nifs::{
         linearization::{
             LFLinearizationProver, LFLinearizationVerifier, LinearizationProver,
@@ -119,9 +120,9 @@ struct PFlow8192Params;
 
 impl DecompositionParams for PFlow8192Params {
     const B: u128 = 1 << 15;
-    // The CRT quotient witnesses reach Q / q_l (~116 bits), so retain more
-    // base-B limbs than the N=4096 P track.
-    const L: usize = 8;
+    // The shifted decode witness reaches Delta (~154 bits), so retain enough
+    // base-B limbs for it and the CRT quotient witnesses (~116 bits).
+    const L: usize = 11;
     const B_SMALL: usize = 2;
     // P is a 176-bit field.
     const K: usize = 177;
@@ -228,6 +229,20 @@ macro_rules! define_flow_channel {
                     .collect()
             }
 
+            /// Signed (i64) coefficient vector -> canonical u64 vector mod q_l.
+            pub fn signed_to_canonical(coeffs: &[i64]) -> Vec<u64> {
+                let modulus = modulus() as i128;
+                coeffs
+                    .iter()
+                    .map(|&c| (((c as i128) % modulus + modulus) % modulus) as u64)
+                    .collect()
+            }
+
+            /// Signed (i64) coefficient vector -> native NTT ring element.
+            pub fn signed_to_ntt(coeffs: &[i64]) -> Result<$ring, Box<dyn Error>> {
+                coeffs_to_ntt(&signed_to_canonical(coeffs))
+            }
+
             /// Lagrange-at-zero coefficients for the given evaluation points
             /// as scalar ring elements.
             pub fn lagrange_scalars(points: &[u64]) -> Vec<$ring> {
@@ -252,12 +267,18 @@ macro_rules! define_flow_channel {
             }
 
             // -- R1: pk0 = -a * sk + e --------------------------------------
-            // z = [pk0, one, sk, e, e_sm]
+            // z = [pk0, one, sk, e, esm_limb_0..esm_limb_{K-1}]
+            //
+            // The smudging noise is wide (~2^74 at lambda=50/z=1), so it is
+            // committed as ESM_LIMBS balanced base-B limbs (plan §9.2), each
+            // individually short.
+            const ESM_LIMBS: usize = 6;
             const R1_PK0: usize = 0;
             const R1_ONE: usize = 1;
             const R1_SK: usize = 2;
             const R1_E: usize = 3;
-            const R1_ROWS: usize = 16; // >= 3 * L = 15 committed limbs
+            const R1_COLS: usize = 4 + ESM_LIMBS;
+            const R1_ROWS: usize = 64; // >= (2 + 6) * L = 40 committed limbs
 
             fn r1_r1cs(a: &$ring) -> R1CS<$ring> {
                 let one = <$ring>::from(1u128);
@@ -267,33 +288,44 @@ macro_rules! define_flow_channel {
                 b_rows[0] = vec![(one, R1_ONE)];
                 R1CS::<$ring> {
                     l: 1,
-                    A: SparseMatrix { nrows: R1_ROWS, ncols: 5, coeffs: a_rows },
-                    B: SparseMatrix { nrows: R1_ROWS, ncols: 5, coeffs: b_rows },
+                    A: SparseMatrix { nrows: R1_ROWS, ncols: R1_COLS, coeffs: a_rows },
+                    B: SparseMatrix { nrows: R1_ROWS, ncols: R1_COLS, coeffs: b_rows },
                     C: SparseMatrix {
                         nrows: R1_ROWS,
-                        ncols: 5,
+                        ncols: R1_COLS,
                         coeffs: vec![vec![]; R1_ROWS],
                     },
                 }
             }
 
             /// Prove one dealer's R1 contribution on this channel; returns the
-            /// public `pk0`, the committed instance, and the witness.
+            /// public `pk0`, the committed instance, and the witness (which
+            /// includes the smudging-noise limbs).
             pub fn prove_r1(
                 dealer_id: u64,
                 a: &$ring,
                 sk: $ring,
                 e: $ring,
-                e_sm: $ring,
+                esm_limbs: &[$ring],
                 ccs: &CCS<$ring>,
                 scheme: &AjtaiCommitmentScheme<$ring>,
                 config: &CommitteeConfig,
             ) -> Result<($ring, CCCS<$ring>, Witness<$ring>), Box<dyn Error>> {
+                if esm_limbs.len() != ESM_LIMBS {
+                    return Err(format!(
+                        "expected {ESM_LIMBS} smudging limbs, got {}",
+                        esm_limbs.len()
+                    )
+                    .into());
+                }
                 let pk0 = -*a * sk + e;
-                let z = vec![pk0, <$ring>::from(1u128), sk, e, e_sm];
+                let mut z = vec![pk0, <$ring>::from(1u128), sk, e];
+                z.extend_from_slice(esm_limbs);
                 ccs.check_relation(&z)?;
 
-                let witness = Witness::from_w_ccs::<$decomp>(vec![sk, e, e_sm]);
+                let mut witness_vec = vec![sk, e];
+                witness_vec.extend_from_slice(esm_limbs);
+                let witness = Witness::from_w_ccs::<$decomp>(witness_vec);
                 let cm = CCCS {
                     cm: witness.commit::<$decomp>(scheme)?,
                     x_ccs: vec![pk0],
@@ -370,14 +402,18 @@ macro_rules! define_flow_channel {
                 e0: $ring,
                 e1: $ring,
                 m: $ring,
-                rng: &mut impl rand::Rng,
                 config: &CommitteeConfig,
             ) -> Result<($ring, $ring), Box<dyn Error>> {
                 let delta_big = <$params as VdkgParams>::delta() % modulus();
                 let delta_scalar: u64 = delta_big.try_into().map_err(|_| "delta overflow")?;
                 let delta = <$ring>::from(delta_scalar as u128);
                 let ccs = CCS::from_r1cs(ruser_r1cs(a, pk0_agg, delta), RUSER_ROWS);
-                let scheme = AjtaiCommitmentScheme::rand(KAPPA, 4 * <$decomp>::L, rng);
+                let scheme = AjtaiCommitmentScheme::from_domain::<ChannelTranscript>(
+                    &format!("vdkg/ruser/q{}/N{}", CHANNEL, degree()),
+                    KAPPA,
+                    4 * <$decomp>::L,
+                    degree(),
+                );
 
                 let ct0 = *pk0_agg * u + e0 + delta * m;
                 let ct1 = *a * u + e1;
@@ -556,9 +592,7 @@ macro_rules! define_flow_channel {
             /// noise is a single small integer polynomial).
             #[allow(clippy::too_many_arguments)]
             pub fn flow(
-                sk: &[Vec<u64>],
-                e: &[Vec<u64>],
-                e_sm: &[Vec<u64>],
+                samples: &[DealerSamples],
                 sk_sharings: &ChannelSharings,
                 esm_sharings: &ChannelSharings,
                 transport: &ShareTransport<$params>,
@@ -574,35 +608,44 @@ macro_rules! define_flow_channel {
 
                 // ---- P1/R1: dealer threshold-key + smudging contributions.
                 let r1_ccs = CCS::from_r1cs(r1_r1cs(&a), R1_ROWS);
-                let r1_scheme =
-                    AjtaiCommitmentScheme::rand(KAPPA, 3 * <$decomp>::L, &mut rng);
-                let mut pk0s = Vec::with_capacity(sk.len());
-                let mut r1_commitments = Vec::with_capacity(sk.len());
-                let mut r1_witnesses = Vec::with_capacity(sk.len());
-                let mut sk_ntts = Vec::with_capacity(sk.len());
-                let mut e_ntts = Vec::with_capacity(sk.len());
-                for (index, ((sk_poly, e_poly), esm_poly)) in
-                    sk.iter().zip(e).zip(e_sm).enumerate()
-                {
+                let r1_scheme = AjtaiCommitmentScheme::from_domain::<ChannelTranscript>(
+                    &format!("vdkg/r1/q{}/N{}", CHANNEL, degree()),
+                    KAPPA,
+                    (2 + ESM_LIMBS) * <$decomp>::L,
+                    degree(),
+                );
+                let mut pk0s = Vec::with_capacity(samples.len());
+                let mut r1_commitments = Vec::with_capacity(samples.len());
+                let mut r1_witnesses = Vec::with_capacity(samples.len());
+                let mut sk_ntts = Vec::with_capacity(samples.len());
+                let mut e_ntts = Vec::with_capacity(samples.len());
+                for (index, dealer) in samples.iter().enumerate() {
                     // R1 <-> R2 anchor (example-side): the sharing secret on
-                    // this channel is exactly the R1 secret key.
+                    // this channel is exactly the R1 secret key (canonically
+                    // reduced; the fhe.rs ternary/CBD samples are signed).
+                    let sk_canonical = signed_to_canonical(&dealer.sk);
                     assert_eq!(
-                        sk_sharings.secrets[index], *sk_poly,
+                        sk_sharings.secrets[index], sk_canonical,
                         "R1/R2 anchor: sharing secret does not match the R1 secret key"
                     );
-                    assert_eq!(
-                        esm_sharings.secrets[index], *esm_poly,
-                        "R1/R2 anchor: sharing secret does not match the R1 smudging noise"
-                    );
-                    let sk_ntt = coeffs_to_ntt(sk_poly)?;
-                    let e_ntt = coeffs_to_ntt(e_poly)?;
-                    let esm_ntt = coeffs_to_ntt(esm_poly)?;
+                    // The wide smudging noise is committed as balanced limbs;
+                    // check the recomposition against the residues shared in R2.
+                    let limb_polys: Vec<Vec<i64>> = (0..degree())
+                        .map(|c| balanced_limbs(&dealer.e_sm[c], ESM_LIMBS))
+                        .collect();
+                    let mut esm_limbs: Vec<$ring> = Vec::with_capacity(ESM_LIMBS);
+                    for limb in 0..ESM_LIMBS {
+                        let poly: Vec<i64> = limb_polys.iter().map(|l| l[limb]).collect();
+                        esm_limbs.push(signed_to_ntt(&poly)?);
+                    }
+                    let sk_ntt = signed_to_ntt(&dealer.sk)?;
+                    let e_ntt = signed_to_ntt(&dealer.e)?;
                     let (pk0, cm, witness) = prove_r1(
                         index as u64 + 1,
                         &a,
                         sk_ntt,
                         e_ntt,
-                        esm_ntt,
+                        &esm_limbs,
                         &r1_ccs,
                         &r1_scheme,
                         config,
@@ -615,7 +658,7 @@ macro_rules! define_flow_channel {
                 }
                 println!(
                     "[q{CHANNEL}] P1/R1: {} dealer contribution proofs verified",
-                    sk.len()
+                    samples.len()
                 );
 
                 // ---- P1/R2 + R3 + R4: GRS sharing proofs, real BFV
@@ -676,13 +719,17 @@ macro_rules! define_flow_channel {
                 let e0 = coeffs_to_ntt(&user_randomness[1])?;
                 let e1 = coeffs_to_ntt(&user_randomness[2])?;
                 let m = coeffs_to_ntt(message)?;
-                let (ct0, ct1) = prove_ruser(&a, &pk0_agg, u, e0, e1, m, &mut rng, config)?;
+                let (ct0, ct1) = prove_ruser(&a, &pk0_agg, u, e0, e1, m, config)?;
                 println!("[q{CHANNEL}] P3/Ruser: user ciphertext proven under pk_agg");
 
                 // ---- P4/R6: decryption shares for the first T parties.
                 let r6_ccs = CCS::from_r1cs(r6_r1cs(&ct1), R6_ROWS);
-                let r6_scheme =
-                    AjtaiCommitmentScheme::rand(KAPPA, 2 * <$decomp>::L, &mut rng);
+                let r6_scheme = AjtaiCommitmentScheme::from_domain::<ChannelTranscript>(
+                    &format!("vdkg/r6/q{}/N{}", CHANNEL, degree()),
+                    KAPPA,
+                    2 * <$decomp>::L,
+                    degree(),
+                );
                 let mut decryption_shares = Vec::with_capacity(config.threshold_t);
                 let mut instances = Vec::with_capacity(config.threshold_t);
                 for party in 1..=config.threshold_t {
@@ -758,9 +805,11 @@ macro_rules! define_p_track {
             const IDX_S2: usize = 11;
             const IDX_E: usize = 12;
             const R7_COLS: usize = 13;
-            const R7_ROWS: usize = 64; // >= 7 * L committed limbs
+            // >= 7 * L committed limbs, padded to a power of two.
+            const R7_ROWS: usize = (7 * <$pdecomp>::L).next_power_of_two();
 
-            fn p_ring_big(coeffs: &[BigUint]) -> Result<$pring, Box<dyn Error>> {
+            /// Build a P-ring element from wide-integer coefficients.
+            pub fn p_ring_big(coeffs: &[BigUint]) -> Result<$pring, Box<dyn Error>> {
                 let polynomial = <$ppoly>::from(
                     coeffs
                         .iter()
@@ -770,7 +819,29 @@ macro_rules! define_p_track {
                 Ok(CRT::elementwise_crt(vec![polynomial])[0])
             }
 
-            fn p_ring_u128(coeffs: &[u128]) -> Result<$pring, Box<dyn Error>> {
+            /// Build a P-ring element from signed integer coefficients
+            /// (negatives are represented as field negations; the balanced
+            /// decomposition treats them as small signed values).
+            pub fn p_ring_signed(coeffs: &[BigInt]) -> Result<$pring, Box<dyn Error>> {
+                let polynomial = <$ppoly>::from(
+                    coeffs
+                        .iter()
+                        .map(|c| {
+                            let (sign, mag) = c.clone().into_parts();
+                            let f = <$pfield>::from(mag);
+                            if sign == num_bigint::Sign::Minus {
+                                -f
+                            } else {
+                                f
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                );
+                Ok(CRT::elementwise_crt(vec![polynomial])[0])
+            }
+
+            /// Build a P-ring element from u128 coefficients.
+            pub fn p_ring_u128(coeffs: &[u128]) -> Result<$pring, Box<dyn Error>> {
                 let polynomial = <$ppoly>::from(
                     coeffs
                         .iter()
@@ -781,7 +852,8 @@ macro_rules! define_p_track {
                 Ok(CRT::elementwise_crt(vec![polynomial])[0])
             }
 
-            fn r7_r1cs() -> R1CS<$pring> {
+            /// The R7 relation (interpolation/CRT/decode) as an R1CS.
+            pub fn r7_r1cs() -> R1CS<$pring> {
                 let [q0, q1, q2] = <$params as VdkgParams>::THRESHOLD_MODULI;
                 let q0 = <$pring>::from(q0 as u128);
                 let q1 = <$pring>::from(q1 as u128);
@@ -798,7 +870,10 @@ macro_rules! define_p_track {
                 a_rows[1] = vec![(one, IDX_U), (-one, IDX_U0), (-q0, IDX_S0)];
                 a_rows[2] = vec![(one, IDX_U), (-one, IDX_U1), (-q1, IDX_S1)];
                 a_rows[3] = vec![(one, IDX_U), (-one, IDX_U2), (-q2, IDX_S2)];
-                // Decode: u = Delta * m + e with 0 < e <= Delta / 2.
+                // Decode for signed (centered) noise: u = Delta * m + e with
+                // e = u - Delta * m the CENTERED noise in (-Delta/2, Delta/2)
+                // (represented as a signed field element; balanced
+                // decomposition handles it).
                 a_rows[4] = vec![(one, IDX_U), (-delta, IDX_M), (-one, IDX_E)];
 
                 let mut b_rows = vec![vec![]; R7_ROWS];
@@ -880,11 +955,16 @@ macro_rules! define_p_track {
                     garner_t1.push(t1);
                     garner_t2.push(t2);
 
-                    let m_big = &value / &delta;
-                    let e_big = &value - &delta * &m_big;
-                    if e_big > &delta / 2u64 || m_big >= BigUint::from(t) {
+                    let half = &delta / 2u64;
+                    let m_big = (&value + &half) / &delta;
+                    // Centered (signed) rounding witness in (-Delta/2, Delta/2).
+                    let half_int = BigInt::from(half.clone());
+                    let e_signed = BigInt::from(value.clone() + &half)
+                        - BigInt::from(&delta * &m_big)
+                        - &half_int;
+                    if num_traits::Signed::abs(&e_signed) > half_int || m_big >= BigUint::from(t) {
                         return Err(format!(
-                            "decode failure at coefficient {coefficient}: rounding witness exceeds Delta/2"
+                            "decode failure at coefficient {coefficient}: centered rounding witness out of range"
                         )
                         .into());
                     }
@@ -894,7 +974,7 @@ macro_rules! define_p_track {
                             .try_into()
                             .map_err(|_| "decoded plaintext exceeds the message space")?,
                     );
-                    rounding.push(e_big);
+                    rounding.push(e_signed);
                 }
 
                 let residue_u128 = |channel: usize| {
@@ -920,7 +1000,7 @@ macro_rules! define_p_track {
                     p_ring_u128(&quotient_s0)?,
                     p_ring_big(&quotient_s1)?,
                     p_ring_big(&quotient_s2)?,
-                    p_ring_big(&rounding)?,
+                    p_ring_signed(&rounding)?,
                 ];
 
                 let ccs = CCS::from_r1cs(r7_r1cs(), R7_ROWS);
@@ -929,10 +1009,49 @@ macro_rules! define_p_track {
                     &witness_r[..],
                 ]
                 .concat();
+                if std::env::var_os("DKG_DEBUG_R7").is_some() {
+                    let half_ring = <$pring>::from(<$pfield>::from(
+                        <$params as VdkgParams>::delta() / 2u64,
+                    ));
+                    let delta_ring = <$pring>::from(<$pfield>::from(
+                        <$params as VdkgParams>::delta(),
+                    ));
+                    let row4 = u_r + half_ring - delta_ring * m_r - witness_r[6];
+                    let row4_coeffs = ICRT::elementwise_icrt(vec![row4])[0].coeffs().to_vec();
+                    let nonzero = row4_coeffs
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| c.into_bigint().0[0] != 0 || c.into_bigint().0[1] != 0)
+                        .map(|(i, c)| (i, c.into_bigint().to_string()))
+                        .take(5)
+                        .collect::<Vec<_>>();
+                    eprintln!("[r7-debug] row4 nonzero coeffs (first 5): {nonzero:?}");
+                    let u0c = ICRT::elementwise_icrt(vec![u_r])[0].coeffs()[0].into_bigint();
+                    let m0c = ICRT::elementwise_icrt(vec![m_r])[0].coeffs()[0].into_bigint();
+                    let e0c = ICRT::elementwise_icrt(vec![witness_r[6]])[0].coeffs()[0]
+                        .into_bigint();
+                    eprintln!("[r7-debug] u[0]={u0c} m[0]={m0c} e[0]={e0c}");
+                    let c = |r: $pring, i: usize| {
+                        ICRT::elementwise_icrt(vec![r])[0].coeffs()[i].into_bigint()
+                    };
+                    eprintln!(
+                        "[r7-debug] u[1]={} m[1]={} e[1]={} half_ring[0]={} half_ring[1]={} delta_ring[1]={}",
+                        c(u_r, 1),
+                        c(m_r, 1),
+                        c(witness_r[6], 1),
+                        c(half_ring, 0),
+                        c(half_ring, 1),
+                        c(delta_ring, 1)
+                    );
+                }
                 ccs.check_relation(&z)?;
 
-                let mut rng = ark_std::test_rng();
-                let scheme = AjtaiCommitmentScheme::rand(KAPPA, 7 * <$pdecomp>::L, &mut rng);
+                let scheme = AjtaiCommitmentScheme::from_domain::<PTranscript>(
+                    &format!("vdkg/r7/P/N{}", <$params as VdkgParams>::DEGREE),
+                    KAPPA,
+                    7 * <$pdecomp>::L,
+                    <$params as VdkgParams>::DEGREE,
+                );
                 let witness = Witness::from_w_ccs::<$pdecomp>(witness_r);
                 let cm = CCCS {
                     cm: witness.commit::<$pdecomp>(&scheme)?,
@@ -1017,22 +1136,56 @@ macro_rules! define_run_full_flow {
 
             let mut rng = ark_std::test_rng();
             let dealers = config.honest_h;
-            let sk = (0..dealers)
-                .map(|_| sample_short_poly::<$params>(2, &mut rng))
-                .collect::<Vec<_>>();
-            let e = (0..dealers)
-                .map(|_| sample_short_poly::<$params>(2, &mut rng))
-                .collect::<Vec<_>>();
-            let e_sm = (0..dealers)
-                .map(|_| sample_smudging_poly::<$params>(&mut rng))
-                .collect::<Vec<_>>();
+            // Real fhe.rs production distributions: ternary sk, CBD errors,
+            // TRBFV smudging noise at lambda=50 (wide: limb-decomposed in R1,
+            // shared as per-channel residues in R2).
+            let samples = (0..dealers)
+                .map(|_| sample_dealer::<$params>(config.honest_h, 1))
+                .collect::<Result<Vec<DealerSamples>, _>>()?;
+            let smudge_bits = smudging_max_bits(&samples);
+            println!(
+                "[setup] H={dealers} dealers sampled via fhe.rs TRBFV (lambda=50, smudging max {smudge_bits} bits)"
+            );
+
             // Channel-native sharings (plan.md R2 is per channel); the three
-            // channel sharings of one short secret are CRT-consistent.
+            // channel sharings of one short secret are CRT-consistent. The
+            // smudging noise exceeds one channel, so it is shared as its
+            // per-channel CRT residues.
             let sk_sharings = (0..3)
-                .map(|channel| generate_channel_sharing::<$params>(&sk, config, channel, &mut rng))
+                .map(|channel| {
+                    let modulus = <$params as VdkgParams>::THRESHOLD_MODULI[channel] as i128;
+                    let secrets = samples
+                        .iter()
+                        .map(|dealer| {
+                            dealer
+                                .sk
+                                .iter()
+                                .map(|&c| (((c as i128) % modulus + modulus) % modulus) as u64)
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>();
+                    generate_channel_sharing::<$params>(&secrets, config, channel, &mut rng)
+                })
                 .collect::<Vec<_>>();
             let esm_sharings = (0..3)
-                .map(|channel| generate_channel_sharing::<$params>(&e_sm, config, channel, &mut rng))
+                .map(|channel| {
+                    let modulus = <$params as VdkgParams>::THRESHOLD_MODULI[channel];
+                    let secrets = samples
+                        .iter()
+                        .map(|dealer| {
+                            dealer
+                                .e_sm
+                                .iter()
+                                .map(|c| {
+                                    let residue = c % BigInt::from(modulus);
+                                    let (_, residue) = residue.into_parts();
+                                    residue.iter_u64_digits().next().unwrap_or(0)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>();
+                    generate_channel_sharing::<$params>(&secrets, config, channel, &mut rng)
+                })
                 .collect::<Vec<_>>();
             // User encryption randomness, shared across channels (short, so
             // the per-channel ciphertexts are CRT-consistent).
@@ -1053,9 +1206,7 @@ macro_rules! define_run_full_flow {
                     .stack_size(FLOW_STACK_SIZE)
                     .spawn_scoped(scope, || {
                         $q0::flow(
-                            &sk,
-                            &e,
-                            &e_sm,
+                            &samples,
                             &sk_sharings[0],
                             &esm_sharings[0],
                             &transport,
@@ -1070,9 +1221,7 @@ macro_rules! define_run_full_flow {
                     .stack_size(FLOW_STACK_SIZE)
                     .spawn_scoped(scope, || {
                         $q1::flow(
-                            &sk,
-                            &e,
-                            &e_sm,
+                            &samples,
                             &sk_sharings[1],
                             &esm_sharings[1],
                             &transport,
@@ -1087,9 +1236,7 @@ macro_rules! define_run_full_flow {
                     .stack_size(FLOW_STACK_SIZE)
                     .spawn_scoped(scope, || {
                         $q2::flow(
-                            &sk,
-                            &e,
-                            &e_sm,
+                            &samples,
                             &sk_sharings[2],
                             &esm_sharings[2],
                             &transport,
@@ -1176,9 +1323,40 @@ pub use n8192_flow::run_full_flow as run_full_flow_n8192;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Standalone check of the R7 relation on one known-good coefficient set
+    /// (fast: no committee, no committee threads).
+    #[test]
+    fn r7_decode_row_is_consistent() {
+        // Values from a real flow debug print (N=4096 set).
+        let config = CommitteeConfig::default();
+        let [q0, q1, q2] = N4096Params::THRESHOLD_MODULI;
+        let delta = N4096Params::delta();
+        let half = &delta / 2u64;
+        let m_true = 7u128;
+        let noise = 12345u128;
+        let u = &delta * m_true + noise - &half; // u + half = delta*m_true + noise
+        // residues u mod q_l
+        let u_big = u.clone();
+        let residues = [
+            (u_big.clone() % q0).iter_u64_digits().next().unwrap_or(0),
+            (u_big.clone() % q1).iter_u64_digits().next().unwrap_or(0),
+            (u_big.clone() % q2).iter_u64_digits().next().unwrap_or(0),
+        ];
+        let mut res = residues.map(|r| vec![0u64; N4096Params::DEGREE]);
+        res[0][0] = residues[0];
+        res[1][0] = residues[1];
+        res[2][0] = residues[2];
+        // prove_r7 must accept and decode m_true at coefficient 0 (others are 0).
+        let decoded = n4096_flow::p_track::prove_r7(&res, &config).expect("prove_r7 failed");
+        assert_eq!(decoded[0], m_true as u64);
+        assert!(decoded[1..].iter().all(|&m| m == 0));
+    }
+
     use crate::vdkg_params::{
         N4096_THRESHOLD_PLAINTEXT_MODULUS, N4096_THRESHOLD_MODULI,
     };
+    use stark_rings::cyclotomic_ring::ICRT;
 
     /// Native (proof-free) replication of the P3/P4 decryption arithmetic on
     /// the N=4096 parameter set: encrypt under the aggregate key, compute T

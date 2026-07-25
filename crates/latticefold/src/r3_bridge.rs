@@ -278,12 +278,16 @@ macro_rules! define_r3_track {
             pub fn r3_context(
                 pk0: &$ring,
                 pk1: &$ring,
-                rng: &mut impl rand::Rng,
             ) -> (CCS<$ring>, AjtaiCommitmentScheme<$ring>) {
                 let delta = <$ring>::from(embedding_delta(PRIME) as u128);
                 (
                     CCS::from_r1cs(r3_r1cs(pk0, pk1, delta), R3_ROWS),
-                    AjtaiCommitmentScheme::rand(KAPPA, 4 * R3Params::L, rng),
+                    AjtaiCommitmentScheme::from_domain::<R3Transcript>(
+                        &format!("vdkg/r3/p{}/N{}", PRIME, DEGREE),
+                        KAPPA,
+                        4 * R3Params::L,
+                        DEGREE,
+                    ),
                 )
             }
 

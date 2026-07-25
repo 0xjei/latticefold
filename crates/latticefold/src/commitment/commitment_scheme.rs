@@ -32,6 +32,35 @@ impl<R: Ring> AjtaiCommitmentScheme<R> {
     }
 }
 
+impl<R: SuitableRing> AjtaiCommitmentScheme<R> {
+    /// Derive the Ajtai matrix from a public domain tag, as the protocol's
+    /// CRS: the tag is absorbed into the ring's Poseidon transcript and the
+    /// `kappa * n * degree` matrix coefficients are squeezed from it, so the
+    /// matrix is deterministic, publicly re-derivable, and domain-separated
+    /// per track (e.g. `"vdkg/r1/q0/N8192"`).
+    pub fn from_domain<T: crate::transcript::Transcript<R> + Default>(
+        tag: &str,
+        kappa: usize,
+        n: usize,
+        degree: usize,
+    ) -> Self {
+        let mut transcript = T::default();
+        for &byte in tag.as_bytes() {
+            transcript.absorb_field_element(&R::BaseRing::from(byte));
+        }
+        let mut matrix = Vec::with_capacity(kappa);
+        for _ in 0..kappa {
+            let mut row = Vec::with_capacity(n);
+            for _ in 0..n {
+                let coeffs = transcript.get_challenges(degree);
+                row.push(R::from(coeffs));
+            }
+            matrix.push(row);
+        }
+        Self::new(matrix.into())
+    }
+}
+
 impl<R: Ring> AjtaiCommitmentScheme<R> {
     /// Commit to a witness
     pub fn commit(&self, f: &[R]) -> Result<Commitment<R>, CommitmentError> {

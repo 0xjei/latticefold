@@ -723,11 +723,11 @@ macro_rules! define_channel_bridge {
                 z.extend(share_ntts.iter().copied());
                 ccs.check_relation(&z)?;
 
-                let mut rng = ark_std::test_rng();
-                let scheme = AjtaiCommitmentScheme::rand(
+                let scheme = AjtaiCommitmentScheme::from_domain::<ChannelTranscript>(
+                    &format!("vdkg/r2/q{}/N{}", CHANNEL, degree()),
                     4,
                     config.r2_witness_len() * <$decomp>::L,
-                    &mut rng,
+                    degree(),
                 );
                 let witness = Witness::from_w_ccs::<$decomp>(
                     std::iter::once(secret_ntt)
@@ -802,12 +802,15 @@ macro_rules! define_channel_bridge {
                 ]
             }
 
-            pub fn r4_context(
-                rng: &mut impl rand::Rng,
-            ) -> (CCS<$ring>, AjtaiCommitmentScheme<$ring>) {
+            pub fn r4_context() -> (CCS<$ring>, AjtaiCommitmentScheme<$ring>) {
                 (
                     CCS::from_r1cs(opening_r1cs(), 16),
-                    AjtaiCommitmentScheme::rand(4, 2 * <$decomp>::L, rng),
+                    AjtaiCommitmentScheme::from_domain::<ChannelTranscript>(
+                        &format!("vdkg/r4/q{}/N{}", CHANNEL, degree()),
+                        4,
+                        2 * <$decomp>::L,
+                        degree(),
+                    ),
                 )
             }
 
@@ -852,8 +855,7 @@ macro_rules! define_channel_bridge {
                 recipient_id: u64,
                 config: &CommitteeConfig,
             ) -> Result<(), Box<dyn Error>> {
-                let mut rng = ark_std::test_rng();
-                let (ccs, scheme) = r4_context(&mut rng);
+                let (ccs, scheme) = r4_context();
                 let (cm, witness, domain_tag) =
                     r4_instance(decoded, sender_id, recipient_id, &ccs, &scheme)?;
 
@@ -988,8 +990,7 @@ macro_rules! define_channel_bridge {
             ) -> Result<Vec<Vec<u64>>, Box<dyn Error>> {
                 ensure_large_rayon_stack();
                 let recipient_id = config.recipient_id as u64;
-                let mut rng = ark_std::test_rng();
-                let (ccs, scheme) = r4_context(&mut rng);
+                let (ccs, scheme) = r4_context();
 
                 // Each dealer's R2 sharing proof, BFV transport, and R4 instance
                 // construction are independent, so they run in parallel across
