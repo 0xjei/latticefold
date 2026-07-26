@@ -30,6 +30,11 @@ impl<R: Ring> AjtaiCommitmentScheme<R> {
     pub fn rand<Rng: rand::Rng + ?Sized>(kappa: usize, n: usize, rng: &mut Rng) -> Self {
         Self::new(vec![vec![R::rand(rng); n]; kappa].into())
     }
+
+    /// The Ajtai matrix (kappa x n).
+    pub fn matrix(&self) -> &Matrix<R> {
+        &self.matrix
+    }
 }
 
 impl<R: SuitableRing> AjtaiCommitmentScheme<R> {

@@ -20,8 +20,82 @@ pub const N4096_THRESHOLD_MODULI: [u64; 3] = [0x20004c001, 0x2000f4001, 0x200164
 /// Product of [`N4096_THRESHOLD_MODULI`].
 pub const N4096_THRESHOLD_MODULUS_PRODUCT: u128 = 634029627889566009658444496897;
 
-/// Reconstruction modulus candidate, greater than four times Q.
+/// Reconstruction modulus candidate, greater than sixteen times Q.
 pub const N4096_RECONSTRUCTION_MODULUS: u128 = 0x80000000000000000000064001;
+
+// ---------------------------------------------------------------------------
+// R7 extraction slack and tight quotient/rounding-witness decomposition
+// (plan §5-R7 step 3/4 and §9.3).
+//
+// EXTRACTION SLACK, DERIVED (not assumed). The knowledge extractor for the
+// R7 P-track proof obtains a CCS witness whose committed digits f* are an
+// Ajtai opening of cm with ||f*||_inf < B' (the MSIS binding bound,
+// `DecompositionParams::B`), while an honest prover's balanced digits satisfy
+// ||f||_inf <= B'/2. The recomposed witness w* = sum_j B'^j f*_j is therefore
+// at most a factor
+//
+//     S = (B'^L' - 1) / ( (B'/2)(B'^L' - 1)/(B' - 1) ) = 2(B' - 1)/B'  <  2
+//
+// larger than the honest balanced bound B'^L'/2: S = 2. The challenge set
+// does NOT enter the operative slack, because the R7 P-track proof is
+// linearize-then-decide: extraction is a single commitment opening (a
+// "challenge-linear-combination" with exactly one term and coefficient 1).
+//
+// For completeness, the fold-path slack IS challenge-derived: one NIFS fold
+// combines 2K' limb instances as f_0 = sum_{i<2K'} rho_i f_i + f_{2K'} with
+// short challenges ||rho_i||_inf <= c_max from the ring's challenge set
+// (c_max = 255 for the N8192/N4096 per-byte sets, 32 for Goldilocks), so an
+// extracted folded witness is a challenge-linear-combination of honest
+// witnesses bounded by S_fold = 2*(1 + (2K'-1)*c_max). For the byte sets with
+// K' = 13..17 this is ~2^13.6-13.9, EXCEEDING the <= 2^10 slack envelope
+// assumed in analysis/SECURITY.md (the envelope holds only for
+// decide-directly proofs such as R7's: 2 <= 2^10). It would also empty the
+// decode row's Delta-window below (the enforced noise bound S_fold * C_e
+// would exceed Delta - E_true). Folding R7 instances is therefore infeasible
+// at these parameters; the P track decides directly, as implemented.
+//
+// TIGHT DECOMPOSITIONS. Each R7 witness class uses a separate balanced
+// decomposition (base B, L limbs) chosen so that
+//   - completeness: the balanced capacity C = (B/2)(B^L-1)/(B-1) >= the
+//     largest honest witness (Q/q_l for the CRT quotients, E_true for the
+//     centered decode noise),
+//   - no-wraparound: the extracted witness (bound ENF = B^L - 1 = S*C with
+//     S = 2) satisfies the per-term invariant ENF_q * q_l < P/2 and the
+//     exact per-row invariant u_max + q_l + ENF_q*q_l < P, and for the
+//     decode row u_max + Delta*(t-1) + ENF_e < P,
+//   - decode soundness (Delta-window): E_true <= C_e and ENF_e < Delta -
+//     E_true, so a wrong plaintext m' != m forces |e'| >= Delta - E_true
+//     beyond the enforced bound,
+// where u_max = Q + ENF_e bounds the reconstructed value via the decode row.
+// ---------------------------------------------------------------------------
+
+/// Extraction slack S of the decide-directly R7 P-track proof (see the
+/// derivation above). Every margin below is computed with this S.
+pub const R7_EXTRACTION_SLACK: u64 = 2;
+
+/// N=8192 R7 CRT-quotient decomposition (B', L'): capacity C_q ~ 2^116 covers
+/// Q/q_l (max quotient witness); ENF_q = B'^L' - 1 = 2^117 - 1.
+pub const N8192_R7_CRT_B: u128 = 1 << 13;
+/// Limbs of the N=8192 CRT-quotient decomposition.
+pub const N8192_R7_CRT_L: usize = 9;
+/// N=8192 R7 decode-noise decomposition (B'', L''): capacity C_e = 2^149
+/// covers the Eq1 noise bound E_true ~ 2^145.6; ENF_e = 2^150 - 1 stays
+/// under Delta - E_true (headroom ~16x).
+pub const N8192_R7_DECODE_B: u128 = 1 << 10;
+/// Limbs of the N=8192 decode-noise decomposition.
+pub const N8192_R7_DECODE_L: usize = 15;
+
+/// N=4096 R7 CRT-quotient decomposition (B', L'): capacity C_q = 2^67 covers
+/// Q/q_l ~ 2^66.3; ENF_q = 2^68 - 1.
+pub const N4096_R7_CRT_B: u128 = 1 << 17;
+/// Limbs of the N=4096 CRT-quotient decomposition.
+pub const N4096_R7_CRT_L: usize = 4;
+/// N=4096 R7 decode-noise decomposition (B'', L''): capacity C_e = 2^83
+/// covers E_true ~ 2^74; ENF_e = 2^84 - 1 stays under Delta - E_true
+/// (headroom ~4x).
+pub const N4096_R7_DECODE_B: u128 = 1 << 12;
+/// Limbs of the N=4096 decode-noise decomposition.
+pub const N4096_R7_DECODE_L: usize = 7;
 
 /// Plaintext modulus for individual BFV share transport.
 pub const N4096_SHARE_PLAINTEXT_MODULUS: u64 = 1 << 34;
@@ -69,12 +143,24 @@ pub const N8192_THRESHOLD_MODULI: [u64; 3] = [
     0x03fffffff8200001,
 ];
 
-/// Reconstruction modulus candidate (176-bit, greater than four times Q).
+/// Reconstruction modulus (177-bit, P = 5.0*Q).
 ///
 /// Chosen of safe form (`P - 1 = 2^21 * m` with `m` prime) so a certified
-/// primitive root exists for the Montgomery field configuration.
+/// primitive root exists for the Montgomery field configuration:
+///   m = 57089907665453869730796028683266655173014990451 (prime).
+/// The previous candidate (176-bit, only `4Q + 2^35`) failed the derived
+/// no-wraparound invariant of the R7 margin accounting: the extracted CRT
+/// quotient witness (slack S = 2 times the tight decomposition capacity
+/// C_q ~ 2^116 over Q/q_l) needs `2 * C_q * q_l < P / 2`, i.e. effectively
+/// `P > 4Q * 1.000122`; this P clears it with ~1.25x headroom and satisfies
+/// the approximate rule `P > 2*S*Q` with S = 2 by a full factor Q.
+/// It satisfies `P = 2097153 mod 2^22` (subsuming `P = 1 mod 2N` and the
+/// LatticeFold congruence with t = 2^20) and fits the three-limb Fp192
+/// field model. The primitive 2N-th root of unity (the P-ring NTT constant
+/// in the stark-rings model) is `3^((P-1)/16384) mod P =
+/// 32970195846663976618806704620762070992180491843905132`.
 pub const N8192_RECONSTRUCTION_MODULUS: &str =
-    "95780971232337531050942682516136025943519008502317057";
+    "119726214040421913813678353145170032429398733254295553";
 
 /// Plaintext modulus for individual BFV share transport: the largest
 /// threshold prime, mirroring the Noir preset's `t_share = max(q_l)` rule.
@@ -117,6 +203,95 @@ pub fn validate_r3_chain() -> bool {
     }) && R3_MODULI[0] != R3_MODULI[1]
 }
 
+/// Balanced capacity of a radix-`b`, `l`-limb decomposition:
+/// `(b/2) * (b^l - 1)/(b - 1)` — the largest honestly decomposable magnitude.
+fn balanced_capacity(b: u128, l: usize) -> BigUint {
+    let b = BigUint::from(b);
+    (b.clone() >> 1) * ((b.pow(l as u32) - BigUint::one()) / (b - BigUint::one()))
+}
+
+/// Enforced witness bound of a radix-`b`, `l`-limb decomposition under the
+/// Ajtai binding boundary (digits `< b`): `b^l - 1`. This is exactly
+/// [`R7_EXTRACTION_SLACK`] times the balanced capacity, up to rounding.
+fn enforced_bound(b: u128, l: usize) -> BigUint {
+    BigUint::from(b).pow(l as u32) - BigUint::one()
+}
+
+/// The full R7 no-wraparound margin accounting (plan §5-R7 step 3/4, §9.3):
+/// quotient-row and decode-row margins plus the decode Delta-window, at the
+/// derived extraction slack [`R7_EXTRACTION_SLACK`], for one parameter set.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn r7_margin_holds(
+    p: &BigUint,
+    moduli: [u64; 3],
+    plaintext: u64,
+    e_true: &BigUint,
+    crt_b: u128,
+    crt_l: usize,
+    dec_b: u128,
+    dec_l: usize,
+) -> bool {
+    let product: BigUint = moduli.iter().map(|&m| BigUint::from(m)).product();
+    let delta = (&product - BigUint::one()) / plaintext;
+    let capacity_q = balanced_capacity(crt_b, crt_l);
+    let enforced_q = enforced_bound(crt_b, crt_l);
+    let capacity_e = balanced_capacity(dec_b, dec_l);
+    let enforced_e = enforced_bound(dec_b, dec_l);
+
+    // Quotient completeness: the honest quotient witnesses s_l < Q/q_l must
+    // fit the balanced decomposition.
+    let p_half = p >> 1;
+    for &modulus in &moduli {
+        let quotient_bound = &product / modulus;
+        if quotient_bound > capacity_q {
+            return false;
+        }
+        // Per-term invariant: extracted |s_l| * q_l < P/2.
+        if R7_EXTRACTION_SLACK * &capacity_q * modulus >= p_half {
+            return false;
+        }
+    }
+
+    // Decode Delta-window: E_true must fit the decomposition (completeness)
+    // and the enforced bound must exclude a wrong plaintext (soundness):
+    // wrong m' forces |e'| >= Delta - E_true > enforced_e.
+    if e_true > &capacity_e || enforced_e >= &delta - e_true {
+        return false;
+    }
+
+    // Exact per-row margins: the R_P ring identities lift to integer
+    // identities. u is bounded via the decode row by u_max = Q + enforced_e.
+    let u_max = &product + &enforced_e;
+    for &modulus in &moduli {
+        if &u_max + modulus + &enforced_q * modulus >= *p {
+            return false;
+        }
+    }
+    // Decode row: |u - Delta*m - e| <= u_max + Delta*(t-1) + enforced_e < P.
+    if &u_max + &delta * (plaintext - 1) + &enforced_e >= *p {
+        return false;
+    }
+
+    true
+}
+
+/// The N=8192 decode-noise bound E_true under the Noir preset's Eq1
+/// accounting (n = 10, z = t, lambda = 50, B = 20, B_chi = 1):
+/// E_true = B_C + n * B_sm with B_C = t * B_fresh.
+fn n8192_decode_noise_bound() -> (BigUint, BigUint) {
+    let n = BigUint::from(10u64);
+    let d = BigUint::from(N8192_DEGREE);
+    let b = BigUint::from(20u64);
+    let two_pow_lambda = BigUint::from(1u64) << 50u32;
+    let benc_min = 2u64 * &d * &n * &b * &two_pow_lambda;
+    let b_fresh = &benc_min + 2u64 * &d * &b * &n;
+    let b_c = BigUint::from(N8192_THRESHOLD_PLAINTEXT_MODULUS) * &b_fresh;
+    let b_sm_min = &b_c * &two_pow_lambda;
+    let e_true = &b_c + n * b_sm_min;
+    (e_true, b_c)
+}
+
 /// Validate the N=8192 candidate and its individual share-transport chain
 /// against the Noir preset's security accounting.
 #[must_use]
@@ -139,11 +314,20 @@ pub fn validate_n8192() -> bool {
 
     let p = BigUint::parse_bytes(N8192_RECONSTRUCTION_MODULUS.as_bytes(), 10)
         .expect("P constant must be decimal");
-    if &p <= &(4u64 * &product)
-        || &p % two_n != BigUint::one()
+    // Primality, NTT-friendliness and the LatticeFold congruence.
+    if &p % two_n != BigUint::one()
         || &p % four_t != BigUint::from(lf_residue)
         || !probable_prime_big(&p)
     {
+        return false;
+    }
+    // Safe form P - 1 = 2^21 * m with m prime (certified primitive root).
+    let safe_m = (&p - BigUint::one()) >> 21;
+    if &p - BigUint::one() != &safe_m << 21 || !probable_prime_big(&safe_m) {
+        return false;
+    }
+    // Fp192 model capacity (three 64-bit Montgomery limbs).
+    if p.bits() > 192 {
         return false;
     }
 
@@ -156,17 +340,25 @@ pub fn validate_n8192() -> bool {
 
     // Eq1 correctness margin with the Noir preset's accounting (n = 10,
     // z = t, lambda = 50, B = 20, B_chi = 1): 2*(B_C + n*B_sm) < Delta.
-    let n = BigUint::from(10u64);
-    let d = BigUint::from(N8192_DEGREE);
-    let b = BigUint::from(20u64);
-    let two_pow_lambda = BigUint::from(1u64) << 50u32;
-    let benc_min = 2u64 * &d * &n * &b * &two_pow_lambda;
-    let b_fresh = &benc_min + 2u64 * &d * &b * &n;
-    let b_c = BigUint::from(N8192_THRESHOLD_PLAINTEXT_MODULUS) * &b_fresh;
-    let b_sm_min = &b_c * &two_pow_lambda;
-    let lhs = (&b_c + n * b_sm_min) << 1;
+    let (e_true, _) = n8192_decode_noise_bound();
     let delta = &product / N8192_THRESHOLD_PLAINTEXT_MODULUS;
-    if lhs >= delta {
+    if &e_true << 1 >= delta {
+        return false;
+    }
+
+    // §9.3 no-wraparound margin for the R7 P track at the derived slack,
+    // over the tight quotient/decode decompositions (replaces the bare
+    // P > 4Q check).
+    if !r7_margin_holds(
+        &p,
+        N8192_THRESHOLD_MODULI,
+        N8192_THRESHOLD_PLAINTEXT_MODULUS,
+        &e_true,
+        N8192_R7_CRT_B,
+        N8192_R7_CRT_L,
+        N8192_R7_DECODE_B,
+        N8192_R7_DECODE_L,
+    ) {
         return false;
     }
 
@@ -275,6 +467,30 @@ fn probable_prime_big(n: &BigUint) -> bool {
     true
 }
 
+/// The N=4096 decode-noise bound E_true under the fhe.rs
+/// `SmudgingBoundCalculator` accounting that the flow actually samples
+/// (variance 10, n = 10 dealers, one summed ciphertext, lambda = 50):
+/// B_fresh = d*(2*n*var + 2*var*n), B_C = B_fresh + (Q mod t),
+/// B_sm = 2^50 * B_C, E_true = B_C + n * B_sm.
+///
+/// Note: the Noir preset's Eq1 accounting used for N8192 (B_C = t*B_fresh)
+/// is INFEASIBLE for N4096 — it gives E_true ~ 2^137 > Delta ~ 2^86 — so
+/// this parameter set has no decryption-correctness margin under that
+/// accounting; the fhe.rs accounting (which drops the t factor from B_C)
+/// is the operative one here.
+fn n4096_decode_noise_bound() -> BigUint {
+    let variance = 10u64;
+    let dealers = BigUint::from(10u64);
+    let degree = BigUint::from(N4096_DEGREE);
+    let b_e = BigUint::from(2 * variance);
+    let b_fresh = &degree * &dealers * &b_e + &degree * &b_e * &dealers;
+    let b_c = &b_fresh
+        + N4096_THRESHOLD_MODULUS_PRODUCT % u128::from(N4096_THRESHOLD_PLAINTEXT_MODULUS);
+    let two_pow_lambda = BigUint::from(1u64) << 50u32;
+    let b_sm = &b_c * &two_pow_lambda;
+    b_c + dealers * b_sm
+}
+
 /// Validate the N=4096 candidate and its individual share-transport chain.
 #[must_use]
 pub fn validate_n4096() -> bool {
@@ -297,11 +513,28 @@ pub fn validate_n4096() -> bool {
         return false;
     }
 
-    if N4096_RECONSTRUCTION_MODULUS <= 4 * product
-        || N4096_RECONSTRUCTION_MODULUS % two_n as u128 != 1
+    let p = BigUint::from(N4096_RECONSTRUCTION_MODULUS);
+    if N4096_RECONSTRUCTION_MODULUS % two_n as u128 != 1
         || N4096_RECONSTRUCTION_MODULUS % four_t as u128 != lf_residue as u128
-        || !probable_prime_big(&BigUint::from(N4096_RECONSTRUCTION_MODULUS))
+        || !probable_prime_big(&p)
     {
+        return false;
+    }
+
+    // §9.3 no-wraparound margin for the R7 P track at the derived slack,
+    // over the tight quotient/decode decompositions (replaces the bare
+    // P > 4Q check).
+    let e_true = n4096_decode_noise_bound();
+    if !r7_margin_holds(
+        &p,
+        N4096_THRESHOLD_MODULI,
+        N4096_THRESHOLD_PLAINTEXT_MODULUS,
+        &e_true,
+        N4096_R7_CRT_B,
+        N4096_R7_CRT_L,
+        N4096_R7_DECODE_B,
+        N4096_R7_DECODE_L,
+    ) {
         return false;
     }
 
@@ -364,6 +597,18 @@ impl VdkgParams for N8192Params {
     const SHARE_MODULI: [u64; 2] = N8192_SHARE_ENCRYPTION_MODULI;
 }
 
+/// The per-channel NTT roots (psi, omega = psi^2 mod q_l) for the wrapper
+/// circuits, mirroring the stark-rings model constants.
+pub fn ntt_roots<P: VdkgParams>(channel: usize) -> (u64, u64) {
+    let (psi, modulus) = if P::DEGREE == N8192_DEGREE {
+        ([115622940536082438u64, 55065086075221574, 12885523556474316][channel], P::THRESHOLD_MODULI[channel])
+    } else {
+        ([8003223405u64, 520027819, 8455812194][channel], P::THRESHOLD_MODULI[channel])
+    };
+    let omega = (psi as u128 * psi as u128 % modulus as u128) as u64;
+    (psi, omega)
+}
+
 #[cfg(test)]
 mod tests {    use super::*;
 
@@ -390,6 +635,66 @@ mod tests {    use super::*;
             .bits();
         // Same shape as the Noir secure-8192 preset: 3 x 58-bit, log2 Q ~ 174.
         assert_eq!(log2_q, 174);
+    }
+
+    #[test]
+    fn n8192_reconstruction_prime_properties() {
+        let p = BigUint::parse_bytes(N8192_RECONSTRUCTION_MODULUS.as_bytes(), 10)
+            .expect("P constant must be decimal");
+        let product: BigUint = N8192_THRESHOLD_MODULI
+            .iter()
+            .map(|&m| BigUint::from(m))
+            .product();
+
+        // Margin over Q at the derived slack S = 2: P > 2*S*Q with a full
+        // factor Q to spare (P = 5.0*Q), and P fits the Fp192 model.
+        assert!(p > R7_EXTRACTION_SLACK * 2u64 * &product);
+        assert!(p.bits() <= 192);
+
+        // Primality, congruences, safe form.
+        assert!(probable_prime_big(&p));
+        assert_eq!(&p % (1u64 << 22), BigUint::from(2097153u64));
+        assert_eq!(&p % (2 * N8192_DEGREE as u64), BigUint::one());
+        assert_eq!(
+            &p % (4 * N8192_THRESHOLD_PLAINTEXT_MODULUS),
+            BigUint::from(1 + 2 * N8192_THRESHOLD_PLAINTEXT_MODULUS)
+        );
+        let safe_m = (&p - BigUint::one()) >> 21;
+        assert_eq!(&p - BigUint::one(), &safe_m << 21);
+        assert!(probable_prime_big(&safe_m), "safe-form cofactor must be prime");
+
+        // Certified primitive root 3 and the P-ring NTT root (the constant
+        // placed in the stark-rings n8192 model): psi = 3^((P-1)/2^14) must
+        // be a primitive 2N-th root of unity, i.e. psi^N = -1 mod P.
+        let exponent = (&p - BigUint::one()) / 2u64;
+        assert_eq!(BigUint::from(3u64).modpow(&exponent, &p), &p - BigUint::one());
+        let psi = BigUint::from(3u64).modpow(&((&p - BigUint::one()) / 16384u64), &p);
+        assert_eq!(
+            psi,
+            BigUint::parse_bytes(
+                b"32970195846663976618806704620762070992180491843905132",
+                10
+            )
+            .unwrap()
+        );
+        assert_eq!(psi.modpow(&8192u64.into(), &p), &p - BigUint::one());
+        assert_eq!(psi.modpow(&16384u64.into(), &p), BigUint::one());
+    }
+
+    #[test]
+    fn n8192_margin_holds_exactly() {
+        let p = BigUint::parse_bytes(N8192_RECONSTRUCTION_MODULUS.as_bytes(), 10).unwrap();
+        let (e_true, _) = n8192_decode_noise_bound();
+        assert!(r7_margin_holds(
+            &p,
+            N8192_THRESHOLD_MODULI,
+            N8192_THRESHOLD_PLAINTEXT_MODULUS,
+            &e_true,
+            N8192_R7_CRT_B,
+            N8192_R7_CRT_L,
+            N8192_R7_DECODE_B,
+            N8192_R7_DECODE_L,
+        ));
     }
 
     #[test]

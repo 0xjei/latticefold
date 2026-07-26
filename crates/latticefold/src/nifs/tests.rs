@@ -200,4 +200,75 @@ mod e2e_tests {
             test_nifs_verify::<RqNTT, CS, DP, T>(KAPPA, N, WIT_LEN);
         }
     }
+
+    mod tree {
+        use cyclotomic_rings::rings::{GoldilocksChallengeSet, GoldilocksRingNTT};
+
+        use super::*;
+        use crate::{
+            arith::{r1cs::get_test_z_split, tests::get_test_ccs},
+            decomposition_parameters::test_params::GoldilocksDP,
+            nifs::tree::fold_tree,
+            transcript::poseidon::PoseidonTranscript,
+        };
+
+        type RqNTT = GoldilocksRingNTT;
+        type CS = GoldilocksChallengeSet;
+        type DP = GoldilocksDP;
+        type T = PoseidonTranscript<RqNTT, CS>;
+
+        const KAPPA: usize = 4;
+        const WIT_LEN: usize = 4;
+
+        fn make_instances(
+            count: usize,
+        ) -> (Vec<(CCCS<RqNTT>, Witness<RqNTT>)>, CCS<RqNTT>, AjtaiCommitmentScheme<RqNTT>)
+        {
+            let n = WIT_LEN * DP::L;
+            let ccs = get_test_ccs::<RqNTT>(n, DP::L);
+            let mut rng = test_rng();
+            let scheme = AjtaiCommitmentScheme::rand(KAPPA, n, &mut rng);
+            let instances = (0..count)
+                .map(|i| {
+                    let (_, x_ccs, w_ccs) = get_test_z_split::<RqNTT>(i + 1);
+                    let witness = Witness::from_w_ccs::<DP>(w_ccs);
+                    let cm = CCCS {
+                        cm: witness.commit::<DP>(&scheme).unwrap(),
+                        x_ccs,
+                    };
+                    (cm, witness)
+                })
+                .collect();
+            (instances, ccs, scheme)
+        }
+
+        #[test]
+        fn test_fold_tree_odd_count_verified() {
+            // 5 instances: exercises an odd-count promotion; every leaf and
+            // node is verified inline (skip_verify = false).
+            let (instances, ccs, scheme) = make_instances(5);
+            let absorb_label = |_: &mut T| {};
+            assert!(fold_tree::<RqNTT, DP, T>(&instances, &ccs, &scheme, &absorb_label, false)
+                .is_ok());
+        }
+
+        #[test]
+        fn test_fold_tree_even_count_verified() {
+            let (instances, ccs, scheme) = make_instances(8);
+            let absorb_label = |_: &mut T| {};
+            assert!(fold_tree::<RqNTT, DP, T>(&instances, &ccs, &scheme, &absorb_label, false)
+                .is_ok());
+        }
+
+        #[test]
+        fn test_fold_tree_rejects_tampered_witness() {
+            // Swapping in a witness that does not match the instance's
+            // commitment must fail the leaf verification.
+            let (mut instances, ccs, scheme) = make_instances(4);
+            instances[1].1 = instances[0].1.clone();
+            let absorb_label = |_: &mut T| {};
+            assert!(fold_tree::<RqNTT, DP, T>(&instances, &ccs, &scheme, &absorb_label, false)
+                .is_err());
+        }
+    }
 }

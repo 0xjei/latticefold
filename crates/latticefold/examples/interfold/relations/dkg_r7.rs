@@ -16,7 +16,11 @@
 //! No-wraparound requirement: P must exceed u_global and every r·q_l cross term
 //! (plus LatticeFold's extraction slack) so the R_P-native identity matches the
 //! intended integer identity. Here values are kept small so no wraparound
-//! occurs; a real deployment derives the margin explicitly (§9.3).
+//! occurs; the margin is DERIVED explicitly in `dkg_r7_crt.rs` and validated
+//! for production in `vdkg_params::r7_margin_holds` (§9.3). The decomposition
+//! below is deliberately NON-vacuous (B^L = 2^60 < P = 2^64): the earlier
+//! B^L = 2^75 > P parameters let every residue decompose short, so any forged
+//! u_global admitted valid quotient witnesses.
 //!
 //! Run with: cargo run --release --example dkg_r7
 
@@ -43,7 +47,8 @@ type T = PoseidonTranscript<RqNTT, CS>;
 struct DP {}
 impl DecompositionParams for DP {
     const B: u128 = 1 << 15;
-    const L: usize = 5;
+    // 4 limbs: B^L = 2^60 < Goldilocks P = 2^64 (non-vacuous decomposition).
+    const L: usize = 4;
     const B_SMALL: usize = 2;
     const K: usize = 15;
 }
@@ -170,9 +175,9 @@ fn main() {
     assert_eq!(folded, verified, "accumulator mismatch");
 
     println!("\nReconstruction proof folded & verified (P track).");
-    println!("Decode step (message = -Q^{{-1}}·(t·u_global) mod Q mod t) is the same shape:");
+    println!("Decode step (centered form u = Δ·m + e, |e| ≤ Δ/2) is the same shape:");
     println!("another bounded rounding/quotient witness — intrinsic to integer division, not a backend artifact.");
     println!(
-        "\nNo-wraparound: P must exceed u_global and all r*q_l terms + extraction slack (§9.3)."
+        "\nNo-wraparound: P must exceed u_global and all r*q_l terms + the DERIVED extraction slack (§9.3)."
     );
 }

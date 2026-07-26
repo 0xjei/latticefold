@@ -22,7 +22,7 @@ use fhe_rand::rng;
 use fhe_traits::{FheDecoder, FheDecrypter, FheEncoder, FheEncrypter};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use stark_rings::cyclotomic_ring::CRT;
+use stark_rings::{cyclotomic_ring::CRT, PolyRing};
 use stark_rings_linalg::SparseMatrix;
 
 use crate::{
@@ -524,7 +524,7 @@ pub fn crt_combine(residues: [u64; 3]) -> u128 {
 }
 
 macro_rules! define_channel_bridge {
-    ($module:ident, $params:ty, $decomp:ty, $ring:ty, $poly:ty, $field:ty, $challenge_set:ty, $channel:expr) => {
+    ($module:ident, $params:ty, $decomp:ty, $ring:ty, $poly:ty, $field:ty, $challenge_set:ty, $channel:expr, $r3_s0:ident, $r3_s1:ident) => {
         pub mod $module {
             use super::*;
 
@@ -703,11 +703,16 @@ macro_rules! define_channel_bridge {
             }
 
             /// Prove that the N channel shares form a degree T-1 sharing of
-            /// the secret via one linearized R2 relation.
-            pub fn prove_r2_sharing(
+            /// the secret via one linearized R2 relation, binding the proof
+            /// transcript to the dealer (`sender_id`) and the configured
+            /// transport recipient. The R2 statement carries no public
+            /// inputs (`x_ccs` is empty), so without these absorbs the proof
+            /// could not be tied to a party.
+            fn prove_r2_sharing_tagged(
                 secret: &[u64],
                 shares: &[Vec<u64>],
                 config: &CommitteeConfig,
+                sender_id: u64,
             ) -> Result<(), Box<dyn Error>> {
                 if shares.len() != config.committee_n {
                     return Err("R2 relation requires exactly N shares".into());
@@ -741,6 +746,7 @@ macro_rules! define_channel_bridge {
 
                 let mut prover_transcript = ChannelTranscript::default();
                 absorb_config(&mut prover_transcript, config);
+                absorb_r2_party_tags(&mut prover_transcript, config, sender_id);
                 let (prover_lcccs, proof) =
                     LFLinearizationProver::<$ring, ChannelTranscript>::prove(
                         &cm,
@@ -750,6 +756,7 @@ macro_rules! define_channel_bridge {
                     )?;
                 let mut verifier_transcript = ChannelTranscript::default();
                 absorb_config(&mut verifier_transcript, config);
+                absorb_r2_party_tags(&mut verifier_transcript, config, sender_id);
                 let verifier_lcccs = LFLinearizationVerifier::<$ring, ChannelTranscript>::verify(
                     &cm,
                     &proof,
@@ -758,6 +765,33 @@ macro_rules! define_channel_bridge {
                 )?;
                 assert_eq!(prover_lcccs, verifier_lcccs, "R2 linearization mismatch");
                 Ok(())
+            }
+
+            /// Absorb the per-party R2 tags (dealer/sender id and transport
+            /// recipient id) so the proof cannot be replayed for another
+            /// party; the channel id is already covered by `absorb_config`.
+            fn absorb_r2_party_tags(
+                transcript: &mut ChannelTranscript,
+                config: &CommitteeConfig,
+                sender_id: u64,
+            ) {
+                for value in [sender_id, config.recipient_id as u64] {
+                    transcript.absorb(&<$ring>::from(value as u128));
+                }
+            }
+
+            /// Prove that the N channel shares form a degree T-1 sharing of
+            /// the secret via one linearized R2 relation.
+            ///
+            /// Single-dealer entry point without a concrete dealer id: the
+            /// proof is bound to the placeholder sender slot 0 (which cannot
+            /// collide with a real 1-based sender id).
+            pub fn prove_r2_sharing(
+                secret: &[u64],
+                shares: &[Vec<u64>],
+                config: &CommitteeConfig,
+            ) -> Result<(), Box<dyn Error>> {
+                prove_r2_sharing_tagged(secret, shares, config, 0)
             }
 
             fn opening_r1cs() -> R1CS<$ring> {
@@ -931,86 +965,213 @@ macro_rules! define_channel_bridge {
             ) -> Result<(), Box<dyn Error>> {
                 let verify_folds = std::env::var_os("DKG_VERIFY_FOLDS").is_some();
 
-                let (cm0, witness0) = &instances[0];
-                let mut bootstrap_prover = ChannelTranscript::default();
-                absorb_config(&mut bootstrap_prover, config);
-                let (mut accumulator, _) =
-                    LFLinearizationProver::<$ring, ChannelTranscript>::prove(
-                        cm0,
-                        witness0,
-                        &mut bootstrap_prover,
-                        ccs,
-                    )?;
-                let mut accumulator_witness = witness0.clone();
-
-                let mut fold_prover = ChannelTranscript::default();
-                let mut fold_verifier = ChannelTranscript::default();
-                absorb_config(&mut fold_prover, config);
-                absorb_config(&mut fold_verifier, config);
-                for (index, (cm_i, witness_i)) in instances.iter().enumerate().skip(1) {
-                    let (new_accumulator, new_witness, proof) =
-                        NIFSProver::<$ring, $decomp, ChannelTranscript>::prove(
-                            &accumulator,
-                            &accumulator_witness,
-                            cm_i,
-                            witness_i,
-                            &mut fold_prover,
-                            ccs,
-                            scheme,
-                        )?;
-                    if verify_folds {
-                        let verified_accumulator =
-                            NIFSVerifier::<$ring, $decomp, ChannelTranscript>::verify(
-                                &accumulator,
-                                cm_i,
-                                &proof,
-                                &mut fold_verifier,
-                                ccs,
-                            )?;
-                        assert_eq!(
-                            new_accumulator, verified_accumulator,
-                            "R4 fold mismatch at {index}"
-                        );
-                    }
-                    accumulator = new_accumulator;
-                    accumulator_witness = new_witness;
-                }
+                let absorb_label = |transcript: &mut ChannelTranscript| {
+                    absorb_config(transcript, config);
+                };
+                // Binary fold tree: same total fold count as the sequential
+                // chain, but log2(n) depth with independent, parallel nodes.
+                crate::nifs::tree::fold_tree::<$ring, $decomp, ChannelTranscript>(
+                    instances,
+                    ccs,
+                    scheme,
+                    &absorb_label,
+                    !verify_folds,
+                )?;
                 Ok(())
             }
 
+            /// Metadata tag for one R3 instance, binding
+            /// (sender, recipient, share kind, channel, transport prime,
+            /// digit limb) in the `sender + 2^16·recipient + 2^32·channel`
+            /// layout that `prove_and_fold_r3_tagged` absorbs.
+            fn r3_tag(
+                sender_id: u64,
+                recipient_id: u64,
+                share_kind: u64,
+                prime_index: u64,
+                limb: u64,
+            ) -> u64 {
+                let encoded_channel =
+                    (((share_kind * 3 + CHANNEL as u64) * 2 + prime_index) << 3) | limb;
+                sender_id + (recipient_id << 16) + (encoded_channel << 32)
+            }
+
             /// Run the H-dealer committee on this channel: N-share R2 sharing
-            /// proofs, BFV transport of the recipient's share, and one folded
-            /// R4 accumulator over all received openings. The `sharings`
-            /// struct holds the H honest dealer sharings folded into R4,
-            /// already reduced to this channel.
+            /// proofs, PROVEN R3 digit transport of the recipient's shares
+            /// (plan.md R3: every digit's ciphertext is accompanied by a
+            /// native per-prime proof `ct0 = pk0*u + e1 + delta*digit`,
+            /// `ct1 = pk1*u + e2`, folded per transport prime), and one
+            /// folded R4 accumulator over all received openings. The
+            /// `sharings` struct holds the H honest dealer sharings folded
+            /// into R4, already reduced to this channel; `share_kind` is 0
+            /// for the secret-key track and 1 for the smudging-noise track
+            /// (transcript domain separation).
             pub fn fold_committee_r4(
-                transport: &ShareTransport<$params>,
+                transport: &crate::r3_bridge::R3Transport,
                 sharings: &ChannelSharings,
                 config: &CommitteeConfig,
+                share_kind: u64,
             ) -> Result<Vec<Vec<u64>>, Box<dyn Error>> {
                 ensure_large_rayon_stack();
                 let recipient_id = config.recipient_id as u64;
                 let (ccs, scheme) = r4_context();
 
-                // Each dealer's R2 sharing proof, BFV transport, and R4 instance
-                // construction are independent, so they run in parallel across
-                // the committee. Errors are stringified to keep the closure's
-                // return type `Send`; only the final NIFS fold chain below is
-                // inherently sequential. Results collect in dealer order.
-                let process = |dealer_index: usize|
-                    -> Result<(Vec<u64>, (CCCS<$ring>, Witness<$ring>)), String> {
+                // R3 contexts (one per transport prime), bound to the
+                // recipient's individual public key.
+                let [pk0_rows, pk1_rows] = transport.pk_coefficients();
+                let (s0_ccs, s0_scheme) = {
+                    let pk0 = crate::r3_bridge::$r3_s0::coeffs_to_ntt(&pk0_rows[0])?;
+                    let pk1 = crate::r3_bridge::$r3_s0::coeffs_to_ntt(&pk1_rows[0])?;
+                    crate::r3_bridge::$r3_s0::r3_context(&pk0, &pk1)
+                };
+                let (s1_ccs, s1_scheme) = {
+                    let pk0 = crate::r3_bridge::$r3_s1::coeffs_to_ntt(&pk0_rows[1])?;
+                    let pk1 = crate::r3_bridge::$r3_s1::coeffs_to_ntt(&pk1_rows[1])?;
+                    crate::r3_bridge::$r3_s1::r3_context(&pk0, &pk1)
+                };
+
+                // Each dealer's R2 sharing proof, R3 digit transport, and R4
+                // instance construction are independent, so they run in
+                // parallel across the committee. Errors are stringified to
+                // keep the closure's return type `Send`; only the fold chains
+                // below are inherently sequential. Results collect in dealer
+                // order. (Return type inferred: the per-prime R3 instance
+                // types are distinct and not nameable inside the macro.)
+                let process = |dealer_index: usize| {
                     let sender_id = dealer_index as u64 + 1;
                     let secret = &sharings.secrets[dealer_index];
                     let shares = &sharings.shares[dealer_index];
-                    prove_r2_sharing(secret, shares, config).map_err(|e| e.to_string())?;
-
-                    let decoded = transport
-                        .round_trip(&shares[(recipient_id - 1) as usize])
+                    prove_r2_sharing_tagged(secret, shares, config, sender_id)
                         .map_err(|e| e.to_string())?;
+
+                    // ---- R3: transport the recipient's share as its base-B
+                    // digits (the same digits the R2 commitment binds), each
+                    // encrypted with fhe.rs extended encryption and proven
+                    // natively per transport prime.
+                    let share = &shares[(recipient_id - 1) as usize];
+                    let share_ntt = share_to_ntt(share).map_err(|e| e.to_string())?;
+                    let digit_witness = Witness::from_w_ccs::<$decomp>(vec![share_ntt]);
+                    let digit_polys: Vec<Vec<i64>> = digit_witness
+                        .f_coeff
+                        .iter()
+                        .map(|digit_poly| {
+                            digit_poly
+                                .coeffs()
+                                .iter()
+                                .map(|c| {
+                                    let v = c.into_bigint().as_ref()[0];
+                                    if v > modulus() / 2 {
+                                        (v as i128 - modulus() as i128) as i64
+                                    } else {
+                                        v as i64
+                                    }
+                                })
+                                .collect()
+                        })
+                        .collect();
+
+                    let mut s0_instances = Vec::with_capacity(digit_polys.len());
+                    let mut s1_instances = Vec::with_capacity(digit_polys.len());
+                    let mut decrypted_digits: Vec<Vec<i64>> =
+                        Vec::with_capacity(digit_polys.len());
+                    for digit_poly in &digit_polys {
+                        let encoded: Vec<u64> = digit_poly
+                            .iter()
+                            .map(|&d| crate::r3_bridge::digit_encode(d))
+                            .collect();
+                        let (ciphertext, u, e1, e2) = transport
+                            .encrypt_digit(&encoded)
+                            .map_err(|e| e.to_string())?;
+                        let ct0_rows =
+                            crate::r3_bridge::R3Transport::ciphertext_coefficients(
+                                &ciphertext, 0,
+                            );
+                        let ct1_rows =
+                            crate::r3_bridge::R3Transport::ciphertext_coefficients(
+                                &ciphertext, 1,
+                            );
+                        let u_rows =
+                            crate::r3_bridge::R3Transport::witness_coefficients(&u);
+                        let e1_rows =
+                            crate::r3_bridge::R3Transport::witness_coefficients(&e1);
+                        let e2_rows =
+                            crate::r3_bridge::R3Transport::witness_coefficients(&e2);
+
+                        s0_instances.push(
+                            crate::r3_bridge::$r3_s0::r3_instance(
+                                &crate::r3_bridge::$r3_s0::coeffs_to_ntt(&ct0_rows[0])
+                                    .map_err(|e| e.to_string())?,
+                                &crate::r3_bridge::$r3_s0::coeffs_to_ntt(&ct1_rows[0])
+                                    .map_err(|e| e.to_string())?,
+                                crate::r3_bridge::$r3_s0::coeffs_to_ntt(&u_rows[0])
+                                    .map_err(|e| e.to_string())?,
+                                crate::r3_bridge::$r3_s0::coeffs_to_ntt(&e1_rows[0])
+                                    .map_err(|e| e.to_string())?,
+                                crate::r3_bridge::$r3_s0::coeffs_to_ntt(&e2_rows[0])
+                                    .map_err(|e| e.to_string())?,
+                                crate::r3_bridge::$r3_s0::signed_to_ntt(digit_poly)
+                                    .map_err(|e| e.to_string())?,
+                                &s0_ccs,
+                                &s0_scheme,
+                            )
+                            .map_err(|e| e.to_string())?,
+                        );
+                        s1_instances.push(
+                            crate::r3_bridge::$r3_s1::r3_instance(
+                                &crate::r3_bridge::$r3_s1::coeffs_to_ntt(&ct0_rows[1])
+                                    .map_err(|e| e.to_string())?,
+                                &crate::r3_bridge::$r3_s1::coeffs_to_ntt(&ct1_rows[1])
+                                    .map_err(|e| e.to_string())?,
+                                crate::r3_bridge::$r3_s1::coeffs_to_ntt(&u_rows[1])
+                                    .map_err(|e| e.to_string())?,
+                                crate::r3_bridge::$r3_s1::coeffs_to_ntt(&e1_rows[1])
+                                    .map_err(|e| e.to_string())?,
+                                crate::r3_bridge::$r3_s1::coeffs_to_ntt(&e2_rows[1])
+                                    .map_err(|e| e.to_string())?,
+                                crate::r3_bridge::$r3_s1::signed_to_ntt(digit_poly)
+                                    .map_err(|e| e.to_string())?,
+                                &s1_ccs,
+                                &s1_scheme,
+                            )
+                            .map_err(|e| e.to_string())?,
+                        );
+
+                        let decoded =
+                            transport.decrypt(&ciphertext).map_err(|e| e.to_string())?;
+                        decrypted_digits.push(
+                            decoded
+                                .iter()
+                                .map(|&v| crate::r3_bridge::digit_decode(v))
+                                .collect(),
+                        );
+                    }
+
+                    // Recompose the share from the decrypted digits modulo
+                    // this channel's prime.
+                    let base = <$decomp>::B as u64;
+                    let mut decoded = vec![0u64; degree()];
+                    for (limb, digits) in decrypted_digits.iter().enumerate() {
+                        let factor = (base as u128).pow(limb as u32) % modulus() as u128;
+                        for (acc, &d) in decoded.iter_mut().zip(digits) {
+                            let term = if d < 0 {
+                                modulus() - (((-d) as u128 * factor % modulus() as u128) as u64)
+                            } else {
+                                (d as u128 * factor % modulus() as u128) as u64
+                            };
+                            *acc = (*acc + term) % modulus();
+                        }
+                    }
+                    if decoded != *share {
+                        return Err(format!(
+                            "R3 transport altered dealer {}'s share",
+                            sender_id
+                        ));
+                    }
+
                     let (cm, witness, _) =
                         r4_instance(&decoded, sender_id, recipient_id, &ccs, &scheme)
                             .map_err(|e| e.to_string())?;
-                    Ok((decoded, (cm, witness)))
+                    Ok((decoded, (cm, witness), s0_instances, s1_instances))
                 };
 
                 let dealer_start = std::time::Instant::now();
@@ -1025,7 +1186,7 @@ macro_rules! define_channel_bridge {
                     .collect::<Result<Vec<_>, String>>()?;
                 if std::env::var_os("DKG_PHASE_TIMING").is_some() {
                     eprintln!(
-                        "[q{CHANNEL}] dealer phase ({} dealers R2+BFV+R4): {:.1}s",
+                        "[q{CHANNEL}] dealer phase ({} dealers R2+R3+R4): {:.1}s",
                         sharings.secrets.len(),
                         dealer_start.elapsed().as_secs_f64()
                     );
@@ -1033,9 +1194,50 @@ macro_rules! define_channel_bridge {
 
                 let mut decoded_shares = Vec::with_capacity(processed.len());
                 let mut instances = Vec::with_capacity(processed.len());
-                for (decoded, instance) in processed {
+                let mut s0_instances = Vec::new();
+                let mut s1_instances = Vec::new();
+                for (decoded, instance, dealer_s0, dealer_s1) in processed {
                     decoded_shares.push(decoded);
                     instances.push(instance);
+                    s0_instances.extend(dealer_s0);
+                    s1_instances.extend(dealer_s1);
+                }
+
+                // ---- Fold the R3 instances, one chain per transport prime,
+                // each instance tagged with its (sender, recipient, share
+                // kind, channel, prime, limb) metadata domain.
+                let digits_l = s0_instances.len() / sharings.secrets.len().max(1);
+                let r3_fold_start = std::time::Instant::now();
+                let s0_tags: Vec<u64> = (0..s0_instances.len())
+                    .map(|index| {
+                        let dealer = (index / digits_l) as u64 + 1;
+                        r3_tag(dealer, recipient_id, share_kind, 0, (index % digits_l) as u64)
+                    })
+                    .collect();
+                let s1_tags: Vec<u64> = (0..s1_instances.len())
+                    .map(|index| {
+                        let dealer = (index / digits_l) as u64 + 1;
+                        r3_tag(dealer, recipient_id, share_kind, 1, (index % digits_l) as u64)
+                    })
+                    .collect();
+                crate::r3_bridge::$r3_s0::prove_and_fold_r3_tagged(
+                    &s0_instances,
+                    &s0_ccs,
+                    &s0_scheme,
+                    &s0_tags,
+                )?;
+                crate::r3_bridge::$r3_s1::prove_and_fold_r3_tagged(
+                    &s1_instances,
+                    &s1_ccs,
+                    &s1_scheme,
+                    &s1_tags,
+                )?;
+                if std::env::var_os("DKG_PHASE_TIMING").is_some() {
+                    eprintln!(
+                        "[q{CHANNEL}] R3 fold chains ({} instances x 2 primes): {:.1}s",
+                        s0_instances.len(),
+                        r3_fold_start.elapsed().as_secs_f64()
+                    );
                 }
 
                 let fold_start = std::time::Instant::now();
@@ -1061,7 +1263,9 @@ define_channel_bridge!(
     N4096Q0RingPoly,
     N4096Q0Field,
     N4096Q0ChallengeSet,
-    0
+    0,
+    n4096_s0,
+    n4096_s1
 );
 define_channel_bridge!(
     q1,
@@ -1071,7 +1275,9 @@ define_channel_bridge!(
     N4096Q1RingPoly,
     N4096Q1Field,
     N4096Q1ChallengeSet,
-    1
+    1,
+    n4096_s0,
+    n4096_s1
 );
 define_channel_bridge!(
     q2,
@@ -1081,7 +1287,9 @@ define_channel_bridge!(
     N4096Q2RingPoly,
     N4096Q2Field,
     N4096Q2ChallengeSet,
-    2
+    2,
+    n4096_s0,
+    n4096_s1
 );
 define_channel_bridge!(
     n8192_q0,
@@ -1091,7 +1299,9 @@ define_channel_bridge!(
     N8192Q0RingPoly,
     N8192Q0Field,
     N8192Q0ChallengeSet,
-    0
+    0,
+    n8192_s0,
+    n8192_s1
 );
 define_channel_bridge!(
     n8192_q1,
@@ -1101,7 +1311,9 @@ define_channel_bridge!(
     N8192Q1RingPoly,
     N8192Q1Field,
     N8192Q1ChallengeSet,
-    1
+    1,
+    n8192_s0,
+    n8192_s1
 );
 define_channel_bridge!(
     n8192_q2,
@@ -1111,7 +1323,9 @@ define_channel_bridge!(
     N8192Q2RingPoly,
     N8192Q2Field,
     N8192Q2ChallengeSet,
-    2
+    2,
+    n8192_s0,
+    n8192_s1
 );
 
 /// Run the real BFV transport and prove one native q0 R4 commitment opening.
@@ -1145,7 +1359,8 @@ pub fn round_trip_shamir_share_and_prove_r4(
         return Err("sender and recipient IDs must be distinct values in 1..=N".into());
     }
 
-    let mut rng = ark_std::test_rng();
+    // OS CSPRNG: the sharing polynomial coefficients are secret.
+    let mut rng = ark_std::rand::rngs::OsRng;
     let mut secret_poly = vec![0u64; N4096_DEGREE];
     secret_poly[0] = secret;
     let sharing = generate_zq_sharing(&secret_poly, &config, &mut rng);
@@ -1177,8 +1392,9 @@ pub fn round_trip_shamir_committee_r4(config: &CommitteeConfig) -> Result<(), Bo
     config.validate()?;
     let recipient = config.recipient_id;
 
-    let transport = ShareTransport::new()?;
-    let mut sharing_rng = ark_std::test_rng();
+    let transport = crate::r3_bridge::R3Transport::new(N4096_DEGREE)?;
+    // OS CSPRNG: the sharing polynomial coefficients are secret.
+    let mut sharing_rng = ark_std::rand::rngs::OsRng;
     let gen_start = std::time::Instant::now();
     let sharings = (0..config.honest_h as u64)
         .map(|dealer| {
@@ -1197,7 +1413,7 @@ pub fn round_trip_shamir_committee_r4(config: &CommitteeConfig) -> Result<(), Bo
         );
     }
 
-    let decoded = q0::fold_committee_r4(&transport, &project_sharings(&sharings, 0), config)?;
+    let decoded = q0::fold_committee_r4(&transport, &project_sharings(&sharings, 0), config, 0)?;
 
     // DKG semantics: the aggregated received shares are a threshold share of
     // the aggregated secret. Reconstruct the aggregate from T aggregated
@@ -1244,8 +1460,9 @@ pub fn round_trip_multichannel_committee_r4(
     config.validate()?;
     let recipient = config.recipient_id;
 
-    let transport = ShareTransport::new()?;
-    let mut sharing_rng = ark_std::test_rng();
+    let transport = crate::r3_bridge::R3Transport::new(N4096_DEGREE)?;
+    // OS CSPRNG: the sharing polynomial coefficients are secret.
+    let mut sharing_rng = ark_std::rand::rngs::OsRng;
     let sharings = (0..config.honest_h as u64)
         .map(|dealer| {
             let mut secret_poly = vec![0u64; N4096_DEGREE];
@@ -1261,10 +1478,10 @@ pub fn round_trip_multichannel_committee_r4(
     // cross the thread boundary (Box<dyn Error> is not Send).
     let (decoded_q0, decoded_q1, decoded_q2) = std::thread::scope(|scope| {
         let handle_q0 = scope
-            .spawn(|| q0::fold_committee_r4(&transport, &project_sharings(&sharings, 0), config).map_err(|e| e.to_string()));
+            .spawn(|| q0::fold_committee_r4(&transport, &project_sharings(&sharings, 0), config, 0).map_err(|e| e.to_string()));
         let handle_q1 = scope
-            .spawn(|| q1::fold_committee_r4(&transport, &project_sharings(&sharings, 1), config).map_err(|e| e.to_string()));
-        let decoded_q2 = q2::fold_committee_r4(&transport, &project_sharings(&sharings, 2), config).map_err(|e| e.to_string());
+            .spawn(|| q1::fold_committee_r4(&transport, &project_sharings(&sharings, 1), config, 0).map_err(|e| e.to_string()));
+        let decoded_q2 = q2::fold_committee_r4(&transport, &project_sharings(&sharings, 2), config, 0).map_err(|e| e.to_string());
         (
             handle_q0.join().unwrap_or_else(|_| Err("q0 fold thread panicked".to_string())),
             handle_q1.join().unwrap_or_else(|_| Err("q1 fold thread panicked".to_string())),

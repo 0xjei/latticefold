@@ -21,7 +21,8 @@ use super::unconstrained_U128::{
 /// # Generic Parameters
 ///
 /// The operations work with `Field` values, but are designed for u128-sized integers.
-/// The modulus must be a positive value less than 2^128.
+/// The modulus must be in `[2, 2^64)` (see `reduce_mod` for the full soundness
+/// contract); all production callers use BFV primes below 2^61.
 pub struct ModU128 {
     /// The modulus for all operations
     pub m: Field,
@@ -60,12 +61,25 @@ impl ModU128 {
     ///
     /// # Panics
     /// The circuit will fail if the reduction is incorrect.
+    /// Reduces `n` modulo the modulus. Soundness contract: the modulus must
+    /// be in `[2, 2^64)`, and callers must pass either canonical operands
+    /// (`< m`, so `n < m^2` after mul) or, for `m >= 2^58`, any `n < 2^128`.
     pub fn reduce_mod(self, n: Field) -> Field {
         // Safety: __compute_mod_reduction is safe to call here because we assert the properties of the output
         let (q, r) = unsafe { __compute_mod_reduction(n, self.m) };
 
-        // Ensure remainder is in [0, m)
-        assert(r as u128 < self.m as u128);
+        // Ensure remainder is in [0, m), canonically and without truncation:
+        // `r as u128` would wrap mod 2^128, admitting r = k*2^128 + small.
+        // Here, if r >= m then m-1-r wraps mod p to ~2^254 and fails the
+        // bit-size check (m < 2^64, so m-1-r < 2^64 exactly when r < m).
+        (self.m - 1 - r).assert_max_bit_size::<64>();
+        // Bound the quotient: honest calls have q = n/m < max(m, 2^128/m)
+        // < 2^70 under the contract above. With q < 2^70 and m < 2^64,
+        // q*m + r < 2^134 << p (BN254, ~2^254), so the equality below holds
+        // over the INTEGERS and (q, r) = (n div m, n mod m) is unique.
+        // Without this bound q is a free field element and ANY claimed
+        // remainder passes via q = (n - r) * m^-1 (mod p).
+        q.assert_max_bit_size::<70>();
         // Verify the reduction is correct
         assert(n == q * self.m + r);
 

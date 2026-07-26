@@ -113,9 +113,12 @@ Step 2, surfaced before any ring is written.
   non-fully-split model (babybear's Fp9-style CRT) over the same fork.
 - **Swapping the remaining slices off Goldilocks** — mechanical now that
   `dkg_r1_native.rs` proves the substitution; each slice is a type-alias change.
-- **Batched-arity fold tree** — cheater isolation is demonstrated per fold step
+- **Batched-arity fold tree** — **DONE** (`src/nifs/tree.rs`,
+  `NIFSProver::prove_acc`/`NIFSVerifier::verify_acc`): binary acc+acc fold
+  trees with per-node transcripts and per-node verification, wired into the
+  R3/R4/R6 fold sites. Cheater isolation is demonstrated per fold step
   (`dkg_cheater_isolation.rs`, O(1) identification, discard, honest-path
-  unaffected); the `L`-ary batched tree of §7 needs an API beyond acc+1 NIFS.
+  unaffected).
 - **Double commitments inside the folded relation** — the §6.2 rank-1
   outer-commitment publication shape is demonstrated (`dkg_double_commitment.rs`);
   the outer OPENING argument inside a LatticeFold+ proof awaits
@@ -271,8 +274,11 @@ equality-of-openings protocol is still required.
     `cargo +1.91.1 run --release --example dkg_fhe_full_flow --features fhe-bridge,parallel`.
   - Deliberate demo scoping (documented in the module): the R1↔R2 anchor and
     Ruser's cross-channel `Com(m)` consistency remain example-side assertions
-    (the repo-wide equality-of-openings gap); the R3 transport is a data plane
-    without a ciphertext-validity proof.
+    (the repo-wide equality-of-openings gap). ~~the R3 transport is a data
+    plane without a ciphertext-validity proof~~ — **R3 is wired in**: shares
+    move as their R2-committed digits through `r3_bridge` (extended
+    encryption, per-prime proofs, folded per prime), one recipient individual
+    key across all channels.
 
   **Production distributions (current).** Witnesses are now sampled with the
   pinned fhe.rs TRBFV distributions (`crates/latticefold/src/samples.rs`):
@@ -328,6 +334,18 @@ sharing on the flow path. Run it:
 
 Parameter-search target, not a certification: run a current lattice estimator
 before claiming 128-bit post-quantum security.
+
+## N=100 committee e2e (2026-07-26)
+
+Full P1→P4 flow with proven R3 transport, binary fold trees, and per-track
+concurrency at **N=100 / H=51 / T=27, degree N=4096** (Apple silicon, 14
+threads): **validated in 18,735.8s wall (63.3 CPU-hours), peak RSS 17 GiB**,
+recovering the exact message. Phases: dealer phase (R2+R3+R4 instances)
+~11,657s (R2's O(N) witness is the bottleneck at N=100), R3 fold chains
+(255 instances × 2 primes/track) 4,763–6,606s, R4 (50 folds) 90–622s, R6/R7
+minutes. Tree folding + track concurrency cut the N=5 flow from 1,676s to
+773s (2.2×). Full details and the remaining gap list: **`report.md`** at the
+repo root.
 
 ## Mapping to the design's §12 implementation plan
 

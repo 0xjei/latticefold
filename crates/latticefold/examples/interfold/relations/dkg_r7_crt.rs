@@ -25,9 +25,34 @@ use num_traits::One;
 /// Concrete small RNS chain (distinct coprime primes) — stands in for the real
 /// NTT-friendly q_l chosen at Step 1; the CRT math is modulus-agnostic.
 const QLS: [u64; 3] = [1_073_741_827, 1_073_741_831, 1_073_741_833];
-/// LatticeFold extraction slack: an extracted witness can be a small constant
-/// factor larger than an honest one; the margin must absorb it.
-const EXTRACTION_SLACK: u64 = 4;
+
+/// Extraction slack S for the no-wraparound margin, DERIVED (§9.3) from the
+/// extraction structure of the implemented R7 P-track proof:
+///
+/// * The production R7 proof is linearize-then-decide (no folding). The
+///   knowledge extractor obtains an Ajtai commitment opening f* with
+///   ‖f*‖∞ < B' (the MSIS binding bound, `DecompositionParams::B`), while an
+///   honest prover's balanced digits satisfy ‖f‖∞ ≤ B'/2. The recomposed
+///   witness is therefore at most
+///       S = (B'^L' − 1) / ((B'/2)(B'^L' − 1)/(B' − 1)) = 2(B'−1)/B'  <  2
+///   times the honest balanced bound: S = 2. The challenge set does not enter
+///   the operative slack — extraction is a single commitment opening (a
+///   "challenge-linear-combination" with one term and coefficient 1).
+///
+/// * Were an R7 instance folded (production must not — plan §5-R7 outputs a
+///   single decided proof), the folded witness would be a short-challenge
+///   combination f_0 = Σ_{i<2K'} ρ_i f_i + f_{2K'} of 2K' honest limb
+///   witnesses with ‖ρ_i‖∞ ≤ c_max from the ring's challenge set (c_max = 255
+///   for the N8192/N4096 per-byte sets, 32 for Goldilocks), giving
+///       S_fold = 2·(1 + (2K'−1)·c_max) ≈ 2^13.6–13.9  (K' = 13..17),
+///   which EXCEEDS the ≤ 2^10 envelope assumed in analysis/SECURITY.md and —
+///   decisively — empties the decode row's Δ-window (the enforced noise bound
+///   S_fold·C_e would exceed Δ − E_true for any C_e ≥ E_true). Folding R7 is
+///   therefore infeasible at these parameters; the P track decides directly.
+///
+/// The N8192/N4096 validation tests (`vdkg_params::r7_margin_holds`) codify
+/// the full per-row margin accounting with this S.
+const EXTRACTION_SLACK: u64 = 2;
 
 fn egcd(a: &BigUint, m: &BigUint) -> BigUint {
     // modular inverse of a mod m via Fermat is unavailable (m not prime power
@@ -114,27 +139,33 @@ fn main() {
     println!("\nCRT reconstruction ✓  (recovered u exactly)");
 
     // ---- Derive the no-wraparound margin for P (§9.3) -----------------------
-    // P must strictly exceed every quantity that appears in the P-native identity
-    // (u itself and the largest r^(l)*q_l cross term), times extraction slack.
-    let largest = if u > max_cross {
-        u.clone()
-    } else {
-        max_cross.clone()
-    };
-    let p_min = &largest * BigUint::from(EXTRACTION_SLACK) + BigUint::one();
+    // Each CRT row is the R_P identity  u − u^(l) − r^(l)·q_l = 0 (mod P); it
+    // lifts to the INTEGER identity iff  |u − u^(l) − r^(l)·q_l| < P.  With
+    // u < Q + E_e (bounded via the decode row), u^(l) < q_l, and the EXTRACTED
+    // quotient witness |r*| ≤ S·C_q where C_q is the tight decomposition
+    // capacity (C_q ≥ Q/q_l, honest headroom h = C_q/(Q/q_l)):
+    //
+    //     P > u + q_l + S·C_q·q_l ≈ (S·h + 1)·Q + q_l + E_e
+    //
+    // per row, and the per-term form  S·C_q·q_l < P/2  suffices a fortiori.
+    let slack = BigUint::from(EXTRACTION_SLACK);
+    let largest = if u > max_cross { u.clone() } else { max_cross.clone() };
+    let p_min = &largest + &slack * &max_cross + BigUint::one();
     println!("\nNo-wraparound margin derivation (not assumed):");
     println!(
         "  max |value in P-identity| = max(u, max r^(l)*q_l) = {largest}  ({} bits)",
         largest.bits()
     );
-    println!("  extraction slack factor   = {EXTRACTION_SLACK}×");
-    println!("  => P must satisfy P > {p_min}");
+    println!("  extraction slack factor   = {EXTRACTION_SLACK}×  (derived, see const doc)");
+    println!("  => P must satisfy P > u + S·max(r^(l)·q_l) = {p_min}");
     println!(
         "     i.e. P needs at least {} bits (Q is {} bits; margin adds ~{} bits).",
         p_min.bits(),
         big_q.bits(),
         p_min.bits().saturating_sub(big_q.bits())
     );
+    println!("\n  Per-term form (validated for production in vdkg_params):");
+    println!("     S·C_q·q_l < P/2  with C_q ≥ Q/q_l the tight decomposition capacity;");
 
     println!("\nResult: reconstruction is exact over real coprime channels; the P-track prime");
     println!(

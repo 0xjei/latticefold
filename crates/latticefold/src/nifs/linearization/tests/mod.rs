@@ -18,7 +18,7 @@ use crate::{
         test_params::{BabyBearDP, FrogDP, GoldilocksDP, StarkDP},
         DecompositionParams,
     },
-    nifs::linearization::utils::{sumcheck_polynomial_comb_fn, SqueezeBeta},
+    nifs::linearization::utils::{absorb_cm_i, sumcheck_polynomial_comb_fn, SqueezeBeta},
     transcript::poseidon::PoseidonTranscript,
 };
 
@@ -265,7 +265,9 @@ fn test_verify_sumcheck_proof() {
     // We need to recreate the exact same transcript state
     let mut verify_transcript = PoseidonTranscript::<RqNTT, CS>::default();
 
-    // Generate beta challenges to match prover's transcript state
+    // Absorb the statement, then generate beta challenges to match the
+    // prover's transcript state
+    absorb_cm_i(&cm_i, &mut verify_transcript);
     let _ = verify_transcript.squeeze_beta_challenges(ccs.s);
 
     let result =
@@ -306,6 +308,7 @@ fn test_verify_evaluation_claim() {
 
     // Reset transcript and generate verification data
     let mut transcript = PoseidonTranscript::<RqNTT, CS>::default();
+    absorb_cm_i(&cm_i, &mut transcript);
     let beta_s = transcript.squeeze_beta_challenges(ccs.s);
 
     let (point_r, s) =
@@ -393,4 +396,75 @@ fn test_verify_invalid_proof() {
     );
 
     assert!(result.is_err());
+}
+
+/// Regression test for the Fiat-Shamir statement-binding flaw: a standalone
+/// linearization proof produced over statement A must NOT verify against a
+/// substituted statement B. Before `cm_i` (commitment + public input) was
+/// absorbed into the transcript ahead of the beta squeeze, the challenges
+/// were statement-independent and this attack succeeded.
+#[test]
+fn test_verify_rejects_substituted_statement() {
+    type RqNTT = GoldilocksRqNTT;
+    type CS = GoldilocksChallengeSet;
+    type DP = GoldilocksDP;
+    let n = WIT_LEN * DP::L;
+    let (wit, cm_i, ccs, scheme) = setup_test_environment::<RqNTT, DP>(None, n);
+    let mut transcript = PoseidonTranscript::<RqNTT, CS>::default();
+
+    // Honest proof over statement A.
+    let (_, proof) = LFLinearizationProver::<RqNTT, PoseidonTranscript<RqNTT, CS>>::prove(
+        &cm_i,
+        &wit,
+        &mut transcript,
+        &ccs,
+    )
+    .unwrap();
+
+    // Positive control: the proof still verifies against the honest statement.
+    let mut transcript = PoseidonTranscript::<RqNTT, CS>::default();
+    let result = LFLinearizationVerifier::<RqNTT, PoseidonTranscript<RqNTT, CS>>::verify(
+        &cm_i,
+        &proof,
+        &mut transcript,
+        &ccs,
+    );
+    assert!(result.is_ok(), "honest linearization proof rejected");
+
+    // Statement B: same commitment and CCS shape, different public input.
+    let mut x_ccs_b = cm_i.x_ccs.clone();
+    x_ccs_b[0] += RqNTT::one();
+    let cm_b = CCCS {
+        cm: cm_i.cm.clone(),
+        x_ccs: x_ccs_b,
+    };
+    let mut transcript = PoseidonTranscript::<RqNTT, CS>::default();
+    let result = LFLinearizationVerifier::<RqNTT, PoseidonTranscript<RqNTT, CS>>::verify(
+        &cm_b,
+        &proof,
+        &mut transcript,
+        &ccs,
+    );
+    assert!(
+        result.is_err(),
+        "linearization proof verified against a substituted public input"
+    );
+
+    // Statement C: same public input, different witness commitment.
+    let bogus_wit = Witness::from_w_ccs::<DP>(vec![RqNTT::one(); wit.w_ccs.len()]);
+    let cm_c = CCCS {
+        cm: bogus_wit.commit::<DP>(&scheme).unwrap(),
+        x_ccs: cm_i.x_ccs.clone(),
+    };
+    let mut transcript = PoseidonTranscript::<RqNTT, CS>::default();
+    let result = LFLinearizationVerifier::<RqNTT, PoseidonTranscript<RqNTT, CS>>::verify(
+        &cm_c,
+        &proof,
+        &mut transcript,
+        &ccs,
+    );
+    assert!(
+        result.is_err(),
+        "linearization proof verified against a substituted commitment"
+    );
 }

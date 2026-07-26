@@ -15,6 +15,9 @@ use modulo::ModU128;
 global B_DIGIT: u64 = 32768;
 
 fn assert_digit(v: Field, q: u64) {
+    // Canonical-form check first: `v as u64` truncates mod 2^64, so without
+    // this v = k*2^64 + small would pass as a "digit". All track moduli < 2^58.
+    v.assert_max_bit_size::<58>();
     let vi = v as u64;
     let ok = if vi <= B_DIGIT {
         true
@@ -202,21 +205,21 @@ unconstrained fn compute_ntt(a: [Field; 1024], psi: Field, omega: Field, q: u64)
 
 fn main(
     w_0: [[Field; 1024]; 3],
-    a_in_0: [[Field; 1024]; 12],
-    cm_0: [[Field; 1024]; 4],
-    a_crs_ntt_0: [Field; 1024],
+    a_in_0: pub [[Field; 1024]; 12], // public CRS (verifier-fixed)
+    cm_0: pub [[Field; 1024]; 4], // the folded commitment being opened
+    a_crs_ntt_0: pub [Field; 1024], // public CRS element a (NTT form)
     pk0_agg_0: pub [Field; 1024],
     r_lin_0: pub [Field; 4],
     w_1: [[Field; 1024]; 3],
-    a_in_1: [[Field; 1024]; 12],
-    cm_1: [[Field; 1024]; 4],
-    a_crs_ntt_1: [Field; 1024],
+    a_in_1: pub [[Field; 1024]; 12],
+    cm_1: pub [[Field; 1024]; 4],
+    a_crs_ntt_1: pub [Field; 1024],
     pk0_agg_1: pub [Field; 1024],
     r_lin_1: pub [Field; 4],
     w_2: [[Field; 1024]; 3],
-    a_in_2: [[Field; 1024]; 12],
-    cm_2: [[Field; 1024]; 4],
-    a_crs_ntt_2: [Field; 1024],
+    a_in_2: pub [[Field; 1024]; 12],
+    cm_2: pub [[Field; 1024]; 4],
+    a_crs_ntt_2: pub [Field; 1024],
     pk0_agg_2: pub [Field; 1024],
     r_lin_2: pub [Field; 4],
     r: pub Field,

@@ -78,6 +78,9 @@ unconstrained fn compute_ntt(a: [Field; 8192]) -> [Field; 8192] {
 
 /// Enforce v is a balanced digit with |v| <= B (v canonical or q0+v).
 fn assert_digit(v: Field) {
+    // Canonical-form check first: `v as u64` truncates mod 2^64, so without
+    // this v = k*2^64 + small would pass as a "digit". Q0 < 2^58.
+    v.assert_max_bit_size::<58>();
     let vi = v as u64;
     let ok = if vi <= B_DIGIT {
         true
@@ -152,7 +155,7 @@ fn verify_ntt(m: ModU128, w: [Field; 8192], w_ntt: [Field; 8192], r: Field) {
 
 fn main(
     w: [[Field; 8192]; 3],
-    a_in: [[Field; 8192]; 12], // KAPPA(4) x M(3), NTT form
+    a_in: pub [[Field; 8192]; 12], // KAPPA(4) x M(3), NTT form (the public CRS)
     cm: pub [[Field; 8192]; 4],
     r: pub Field,
 ) {

@@ -110,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
     ccs.check_relation(&z)?;
 
-    let mut rng = ark_std::test_rng();
+    let mut rng = ark_std::rand::rngs::OsRng;
     let scheme: AjtaiCommitmentScheme<PRing> =
         AjtaiCommitmentScheme::rand(4, 3 * PReconstructionParams::L, &mut rng);
     let witness = Witness::from_w_ccs::<PReconstructionParams>(vec![

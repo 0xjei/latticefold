@@ -145,3 +145,39 @@ digests is a required production change.
 4. **Solidity verifier + gas measurement** on the final circuits (`bb
    write_solidity_verifier` works; measured gas needs a Foundry run — the
    article's artifacts were 3.2-3.8M gas for reference).
+
+## Soundness pass (2026-07-26) — fixed, and remaining known gaps
+
+Fixed in the circuits: the `reduce_mod` quotient is now range-constrained
+(honest `n < m^2`, so `q < 2^70`; then `q*m + r < 2^130 << p` makes the
+divmod equality an integer identity — previously `q` was a free field
+element and any claimed remainder passed); the same fix was applied to the
+dormant production original `circuits/lib/src/math/modulo/U128.nr`;
+`assert_digit` now enforces canonical form before its `as u64` cast (the
+cast truncated mod 2^64); the Ajtai CRS matrices, folded commitments, CRS
+element `a`, per-gamma evals, and the C7 decryption shares are now `pub`
+inputs (the verifier fixes them to the true values); C7's Garner digit
+bounds and decode window are enforced on canonical representatives without
+`as` casts, and the decode accepts centered noise `e in [0, Delta/2] union
+[Q - Delta/2, Q)` matching the Rust flow.
+
+Remaining known gaps (documented cost deltas, not yet implemented):
+
+1. **SZ challenge binding.** `r` is currently a fixed compiled-in constant
+   (or public input), and the off-circuit derivation in
+   `wrapper_challenge.rs` binds only public digests, so a prover chooses the
+   wrapper witnesses (w, w_ntt) *after* knowing the evaluation point.
+   Production must derive `r` over a commitment to the wrapper witness
+   (bounded in-circuit hashing, sanctioned by plan.md section 10) — expect
+   an opcode delta for the Poseidon absorption of ~24k elements/track.
+   Also: a single evaluation point at degree ~2^13 over a 58-bit modulus
+   gives ~45-bit per-check soundness; production needs amplification
+   (multiple independent points).
+2. **`r_lin` (and gamma/rho) must be re-derived from the folding
+   transcript.** As free public inputs they make the evaluation-consistency
+   check degenerate (`r_lin = [1, ...]` forces `eq0 = 0`). The verifier
+   side must replay the folding transcript's Fiat-Shamir to bind them.
+3. **Public-input integrity is a verifier obligation**: with CRS matrices,
+   commitments and shares now public, the verifier/contract must source
+   them from the real CRS digests and broadcast values, not from the
+   prover's supplied proof bundle.

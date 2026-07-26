@@ -4,6 +4,7 @@ use stark_rings::OverField;
 use stark_rings_poly::mle::DenseMultilinearExtension;
 
 use crate::{
+    arith::CCCS,
     ark_base::Vec,
     nifs::{error::LinearizationError, CCS},
     transcript::Transcript,
@@ -104,6 +105,25 @@ pub(crate) fn sumcheck_polynomial_comb_fn<NTT: SuitableRing>(vals: &[NTT], ccs: 
     }
     // eq() is the last term added
     result * vals[vals.len() - 1]
+}
+
+/// Absorb the CCCS statement being linearized into the Fiat-Shamir
+/// transcript, so the beta challenges — and therefore every later challenge
+/// and the whole linearization proof — depend on the witness commitment and
+/// the public input. Mirrors the `cm_i` half of `absorb_public_input` in
+/// `nifs.rs`; both the prover and the verifier call this before the beta
+/// squeeze, keeping the standalone path and the NIFS fold path (which calls
+/// the same prove/verify functions) symmetric.
+pub(crate) fn absorb_cm_i<NTT: SuitableRing>(
+    cm_i: &CCCS<NTT>,
+    transcript: &mut impl Transcript<NTT>,
+) {
+    transcript.absorb_field_element(&<NTT::BaseRing as Field>::from_base_prime_field(
+        <NTT::BaseRing as Field>::BasePrimeField::from_be_bytes_mod_order(b"cm_i"),
+    ));
+
+    transcript.absorb_slice(cm_i.cm.as_ref());
+    transcript.absorb_slice(&cm_i.x_ccs);
 }
 
 pub(crate) trait SqueezeBeta<NTT: SuitableRing> {

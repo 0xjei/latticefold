@@ -3,7 +3,9 @@ use stark_rings::{OverField, PolyRing};
 use stark_rings_poly::mle::DenseMultilinearExtension;
 
 pub use self::structs::*;
-use self::utils::{compute_u, prepare_lin_sumcheck_polynomial, sumcheck_polynomial_comb_fn};
+use self::utils::{
+    absorb_cm_i, compute_u, prepare_lin_sumcheck_polynomial, sumcheck_polynomial_comb_fn,
+};
 use super::error::LinearizationError;
 use crate::{
     arith::{Instance, Witness, CCCS, CCS, LCCCS},
@@ -148,6 +150,11 @@ impl<NTT: SuitableRing, T: Transcript<NTT>> LinearizationProver<NTT, T>
         transcript: &mut impl Transcript<NTT>,
         ccs: &CCS<NTT>,
     ) -> Result<(LCCCS<NTT>, LinearizationProof<NTT>), LinearizationError<NTT>> {
+        // Step 0: Bind the transcript to the statement being linearized
+        // (commitment + public input), so the beta challenges — and every
+        // challenge derived after them — depend on `cm_i`.
+        absorb_cm_i(cm_i, transcript);
+
         // Step 1: Generate beta challenges (done in construct_polynomial_g because they are not needed
         // elsewhere.
 
@@ -273,6 +280,10 @@ impl<NTT: SuitableRing, T: Transcript<NTT>> LinearizationVerifier<NTT, T>
                 "malformed linearization proof or CCS statement length",
             )));
         }
+
+        // Step 0: Bind the transcript to the statement being verified
+        // (mirror of the prover), so the beta challenges depend on `cm_i`.
+        absorb_cm_i(cm_i, transcript);
 
         // Step 1: Generate the beta challenges.
         let beta_s = transcript.squeeze_beta_challenges(ccs.s);

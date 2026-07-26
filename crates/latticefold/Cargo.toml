@@ -137,6 +137,10 @@ name = "dkg_fhe_r3"
 path = "examples/interfold/fhe/dkg_fhe_r3.rs"
 
 [[example]]
+name = "dkg_wrapper_export"
+path = "examples/interfold/fhe/dkg_wrapper_export.rs"
+
+[[example]]
 name = "dkg_fhe_multichannel_r4"
 path = "examples/interfold/fhe/dkg_fhe_multichannel_r4.rs"
 

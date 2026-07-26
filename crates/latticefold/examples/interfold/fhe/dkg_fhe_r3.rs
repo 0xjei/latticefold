@@ -64,7 +64,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transport = R3Transport::new(DEGREE)?;
     let [pk0_rows, pk1_rows] = transport.pk_coefficients();
 
-    let mut rng = ark_std::test_rng();
+    // OS CSPRNG: dealer shares are secret protocol randomness.
+    let mut rng = ark_std::rand::rngs::OsRng;
     let (s0_ccs, s0_scheme) = {
         let pk0 = n8192_s0::coeffs_to_ntt(&pk0_rows[0])?;
         let pk1 = n8192_s0::coeffs_to_ntt(&pk1_rows[0])?;

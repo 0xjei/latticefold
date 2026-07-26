@@ -326,76 +326,53 @@ macro_rules! define_r3_track {
                 scheme: &AjtaiCommitmentScheme<$ring>,
                 tag: u64,
             ) -> Result<(), Box<dyn Error>> {
+                let tags = vec![tag; instances.len()];
+                prove_and_fold_r3_tagged(instances, ccs, scheme, &tags)
+            }
+
+            /// As [`prove_and_fold_r3`], but with one metadata `tag` per
+            /// instance, so each instance's linearization is bound to its own
+            /// (sender, recipient, channel/limb) domain. Each `tag` packs
+            /// `sender + 2^16·recipient + 2^32·channel` (the
+            /// `fhe_bridge::metadata_domain` layout); the fields are absorbed
+            /// separately so each is individually bound. The shared fold
+            /// transcript absorbs every tag in instance order.
+            pub fn prove_and_fold_r3_tagged(
+                instances: &[(CCCS<$ring>, Witness<$ring>)],
+                ccs: &CCS<$ring>,
+                scheme: &AjtaiCommitmentScheme<$ring>,
+                tags: &[u64],
+            ) -> Result<(), Box<dyn Error>> {
+                if instances.is_empty() {
+                    return Err("no R3 instances to prove".into());
+                }
+                if tags.len() != instances.len() {
+                    return Err(format!(
+                        "expected one metadata tag per instance ({} tags for {} instances)",
+                        tags.len(),
+                        instances.len()
+                    )
+                    .into());
+                }
                 let verify_folds = std::env::var_os("DKG_VERIFY_FOLDS").is_some();
 
-                let absorb = |transcript: &mut R3Transcript| {
-                    transcript.absorb(&<$ring>::from(tag as u128));
-                };
-                for (cm, witness) in instances {
-                    let mut prover_transcript = R3Transcript::default();
-                    absorb(&mut prover_transcript);
-                    let (prover_lcccs, proof) =
-                        LFLinearizationProver::<$ring, R3Transcript>::prove(
-                            cm,
-                            witness,
-                            &mut prover_transcript,
-                            ccs,
-                        )?;
-                    let mut verifier_transcript = R3Transcript::default();
-                    absorb(&mut verifier_transcript);
-                    let verifier_lcccs = LFLinearizationVerifier::<$ring, R3Transcript>::verify(
-                        cm,
-                        &proof,
-                        &mut verifier_transcript,
-                        ccs,
-                    )?;
-                    assert_eq!(prover_lcccs, verifier_lcccs, "R3 linearization mismatch");
-                }
-
-                let (cm0, witness0) = &instances[0];
-                let mut bootstrap_prover = R3Transcript::default();
-                absorb(&mut bootstrap_prover);
-                let (mut accumulator, _) =
-                    LFLinearizationProver::<$ring, R3Transcript>::prove(
-                        cm0,
-                        witness0,
-                        &mut bootstrap_prover,
-                        ccs,
-                    )?;
-                let mut accumulator_witness = witness0.clone();
-
-                let mut fold_prover = R3Transcript::default();
-                let mut fold_verifier = R3Transcript::default();
-                absorb(&mut fold_prover);
-                absorb(&mut fold_verifier);
-                for (index, (cm_i, witness_i)) in instances.iter().enumerate().skip(1) {
-                    let (new_accumulator, new_witness, proof) =
-                        NIFSProver::<$ring, R3Params, R3Transcript>::prove(
-                            &accumulator,
-                            &accumulator_witness,
-                            cm_i,
-                            witness_i,
-                            &mut fold_prover,
-                            ccs,
-                            scheme,
-                        )?;
-                    if verify_folds {
-                        let verified_accumulator =
-                            NIFSVerifier::<$ring, R3Params, R3Transcript>::verify(
-                                &accumulator,
-                                cm_i,
-                                &proof,
-                                &mut fold_verifier,
-                                ccs,
-                            )?;
-                        assert_eq!(
-                            new_accumulator, verified_accumulator,
-                            "R3 fold mismatch at {index}"
-                        );
+                let absorb_label = |transcript: &mut R3Transcript| {
+                    for &tag in tags {
+                        for value in [tag & 0xFFFF, (tag >> 16) & 0xFFFF, tag >> 32] {
+                            transcript.absorb(&<$ring>::from(value as u128));
+                        }
                     }
-                    accumulator = new_accumulator;
-                    accumulator_witness = new_witness;
-                }
+                };
+                // Binary fold tree: same total fold count as the sequential
+                // chain, but log2(n) depth with independent, parallel nodes
+                // (and independently verifiable proofs per node).
+                crate::nifs::tree::fold_tree::<$ring, R3Params, R3Transcript>(
+                    instances,
+                    ccs,
+                    scheme,
+                    &absorb_label,
+                    !verify_folds,
+                )?;
                 Ok(())
             }
         }

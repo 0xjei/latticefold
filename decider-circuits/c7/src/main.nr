@@ -36,12 +36,15 @@ fn check_interpolation(
 }
 
 fn main(
-    d_0_1: [Field; 1024],
-    d_0_2: [Field; 1024],
-    d_1_1: [Field; 1024],
-    d_1_2: [Field; 1024],
-    d_2_1: [Field; 1024],
-    d_2_2: [Field; 1024],
+    // Decryption shares are public: the protocol broadcasts them (plan R7:
+    // "every d_i has already been publicly revealed"). The verifier fixes
+    // them to the true broadcast values (canonical, < q_l).
+    d_0_1: pub [Field; 1024],
+    d_0_2: pub [Field; 1024],
+    d_1_1: pub [Field; 1024],
+    d_1_2: pub [Field; 1024],
+    d_2_1: pub [Field; 1024],
+    d_2_2: pub [Field; 1024],
     u_0: pub [Field; 1024],
     u_1: pub [Field; 1024],
     u_2: pub [Field; 1024],
@@ -59,16 +62,26 @@ fn main(
     check_interpolation(d_1_1, d_1_2, u_1, LAMBDAS_1, Q_1);
     check_interpolation(d_2_1, d_2_2, u_2, LAMBDAS_2, Q_2);
 
+    // Q = q0*q1*q2 ~ 2^174 and Q/2 (via 2*e < Q, avoiding field division).
+    let q_field = (Q_0 as Field) * (Q_1 as Field) * (Q_2 as Field);
+
     for k in 0..1024 {
-        // Digit bounds: r0 < q0, t1 < q1, t2 < q2; quotients s_l < Q/q_l.
-        assert((r0[k] as u64) < Q_0);
-        assert((t1[k] as u64) < Q_1);
-        assert((t2[k] as u64) < Q_2);
+        // Digit bounds, canonical and truncation-free: x < q_l iff
+        // q_l - 1 - x does not wrap mod p (q_l < 2^58, wraps give ~2^254).
+        // The old `x as u64`/`as u128` casts truncated mod 2^64/2^128.
+        ((Q_0 as Field) - 1 - r0[k]).assert_max_bit_size::<58>();
+        ((Q_1 as Field) - 1 - t1[k]).assert_max_bit_size::<58>();
+        ((Q_2 as Field) - 1 - t2[k]).assert_max_bit_size::<58>();
+        // Quotient witnesses s_l are uniquely pinned mod p by the public
+        // (u, u_l) in the quotient rows below, so range checks on their
+        // canonical representatives suffice.
         assert((s0[k] as u128) < (Q_1 as u128) * (Q_2 as u128));
         assert((s1[k] as u128) < (Q_0 as u128) * (Q_2 as u128));
         assert((s2[k] as u128) < (Q_0 as u128) * (Q_1 as u128));
 
         // Garner recombination: u = r0 + q0*t1 + q0*q1*t2 (integers).
+        // With the digit bounds above this is < 2Q < p, hence an integer
+        // equality with unique digits for u < Q.
         let garner = r0[k]
             + t1[k] * (Q_0 as Field)
             + t2[k] * ((Q_0 as u128 * Q_1 as u128) as Field);
@@ -80,9 +93,18 @@ fn main(
         assert(u[k] == u_1[k] + s1[k] * (Q_1 as Field));
         assert(u[k] == u_2[k] + s2[k] * (Q_2 as Field));
 
-        // Decode: u = Delta * m + e with 0 <= e <= Delta/2, m < t.
+        // Decode: u = Delta * m + e (integers, all terms < 2^175 << p), with
+        // m < t and e a CENTERED rounding error: |e| <= Delta/2, i.e.
+        // e in [0, Delta/2] union [Q - Delta/2, Q). All bounds are enforced
+        // on canonical representatives (no `as` truncation): the old
+        // `(e as u128) <= (DELTA_HALF as u128)` truncated DELTA_HALF mod
+        // 2^128 and let a forged (m', e') decode the same public u to a
+        // different plaintext.
         assert(u[k] == DELTA * m[k] + e[k]);
-        assert((e[k] as u128) <= (DELTA_HALF as u128));
-        assert((m[k] as u64) < T_PLAIN);
+        ((T_PLAIN as Field) - 1 - m[k]).assert_max_bit_size::<20>();
+        // e < Q canonically, then |e| = min(e, Q - e) <= Delta/2.
+        (q_field - 1 - e[k]).assert_max_bit_size::<174>();
+        let e_abs = if (e[k] + e[k]).lt(q_field) { e[k] } else { q_field - e[k] };
+        (DELTA_HALF - e_abs).assert_max_bit_size::<153>();
     }
 }

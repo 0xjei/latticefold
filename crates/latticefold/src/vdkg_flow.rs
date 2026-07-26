@@ -6,7 +6,9 @@
 //!   smudging noise `e_sm,i` inside the same short witness), shares both
 //!   secrets per channel (`generate_channel_sharing`, the plan's native
 //!   per-channel formulation of R2) with GRS-syndrome R2 proofs, transports
-//!   the recipient's shares with real `fhe.rs` BFV (R3 data plane), and the
+//!   the recipient's shares through the proven R3 path (each share's
+//!   R2-committed digits encrypted with `fhe.rs` extended encryption, proven
+//!   per transport prime and folded — see [`crate::r3_bridge`]), and the
 //!   recipient opens every received share in the metadata-bound R4 relation,
 //!   folded per channel with NIFS (reusing [`crate::fhe_bridge`]).
 //! - **P2 aggregation (R5).** `pk0_agg = sum pk0_i` is public; the Ajtai
@@ -20,20 +22,20 @@
 //! - **P4 threshold decryption.** Each of the first T parties proves R6
 //!   (`d_j = ct0 + ct1 * sk_share_j + e_sm_share_j`) over its aggregated R4
 //!   shares, folded per channel; the T decryption shares are Lagrange-
-//!   interpolated per channel and the P-track R7 relation proves the CRT
+//!   interpolated per channel and the P-track R7 relations prove the CRT
 //!   reconstruction (quotient witnesses `u = u_l + s_l * q_l`) and the decode
-//!   (`u = Delta * m + e`, bounded positive rounding witness) natively in the
-//!   P ring, recovering the user plaintext.
+//!   (`u = Delta * m + e`, centered rounding witness) natively in the P ring,
+//!   both range-enforced by tight witness decompositions (§9.3 margin in
+//!   `vdkg_params::r7_margin_holds`), recovering the user plaintext.
+//!
+//! Production distributions: secrets, errors, and smudging noise are sampled
+//! with the pinned fhe.rs TRBFV distributions ([`crate::samples`]) — ternary
+//! `sk`, CBD errors, λ=50 smudging noise (wide: committed in R1 as balanced
+//! limbs, shared as per-channel residues) — and the R7 decode uses the
+//! centered-noise form `u = Delta * m + e` with `|e| <= Delta/2`.
 //!
 //! Deliberate demonstration simplifications (documented, never silent):
 //!
-//! - Secrets and errors are sampled with small NON-NEGATIVE coefficients
-//!   (`{0,1}` for `sk/e/u/e0/e1`, smudging noise in `[3N, 6N)`) so the R7
-//!   decode witness is a positive bounded integer and no centered/balanced
-//!   handling is required. The smudging shift dominates the (possibly
-//!   negative) negacyclic wrap terms of the product noises, so
-//!   `0 < e < 8 * H * N << Delta / 2` coefficient-wise and the decode identity
-//!   holds over the integers. The relation shapes are unaffected.
 //! - Cross-relation equality-of-openings (the R1<->R2 secret anchor, the
 //!   R2->R4 share binding, and Ruser's cross-channel `Com(m)` consistency) are
 //!   example-side assertions, exactly as in the other slices; verifier-bound
@@ -64,7 +66,7 @@ use crate::{
     commitment::AjtaiCommitmentScheme,
     decomposition_parameters::DecompositionParams,
     fhe_bridge::{
-        generate_channel_sharing, ChannelSharings, CommitteeConfig, ShareTransport,
+        generate_channel_sharing, ChannelSharings, CommitteeConfig,
     },
     samples::{balanced_limbs, sample_dealer, smudging_max_bits, DealerSamples},
     nifs::{
@@ -75,7 +77,11 @@ use crate::{
         NIFSProver, NIFSVerifier,
     },
     transcript::{poseidon::PoseidonTranscript, Transcript},
-    vdkg_params::{N4096Params, N8192Params, VdkgParams},
+    vdkg_params::{
+        N4096Params, N8192Params, VdkgParams, N4096_R7_CRT_B, N4096_R7_CRT_L,
+        N4096_R7_DECODE_B, N4096_R7_DECODE_L, N8192_R7_CRT_B, N8192_R7_CRT_L,
+        N8192_R7_DECODE_B, N8192_R7_DECODE_L,
+    },
 };
 
 const KAPPA: usize = 4;
@@ -92,16 +98,33 @@ impl DecompositionParams for FlowParams {
     const K: usize = 35;
 }
 
+/// N=4096 R7 CRT-quotient witness decomposition (tight): capacity 2^67 over
+/// the ~2^66.3 quotient witnesses. The margin accounting and the derived
+/// extraction slack are in `vdkg_params` (see `r7_margin_holds`).
 #[derive(Clone)]
-struct PFlowParams;
+struct PFlowCrtParams;
 
-impl DecompositionParams for PFlowParams {
-    const B: u128 = 1 << 15;
-    const L: usize = 7;
+impl DecompositionParams for PFlowCrtParams {
+    const B: u128 = N4096_R7_CRT_B;
+    const L: usize = N4096_R7_CRT_L;
     const B_SMALL: usize = 2;
-    // P is a 104-bit field; retain enough binary limbs for signed field
-    // representatives and the public-input decomposition.
-    const K: usize = 105;
+    // log2(B); the R7 track is decide-directly, so the fold-only K is
+    // documentary (a fold would additionally need K to cover the public
+    // inputs, and is ruled out by the fold-slack analysis in vdkg_params).
+    const K: usize = 17;
+}
+
+/// N=4096 R7 decode-noise witness decomposition (tight): capacity 2^83 over
+/// the ~2^74 centered noise, enforced bound 2^84 - 1 < Delta - E_true.
+#[derive(Clone)]
+struct PFlowDecodeParams;
+
+impl DecompositionParams for PFlowDecodeParams {
+    const B: u128 = N4096_R7_DECODE_B;
+    const L: usize = N4096_R7_DECODE_L;
+    const B_SMALL: usize = 2;
+    // log2(B); see PFlowCrtParams.
+    const K: usize = 12;
 }
 
 #[derive(Clone)]
@@ -115,17 +138,31 @@ impl DecompositionParams for Flow8192Params {
     const K: usize = 59;
 }
 
+/// N=8192 R7 CRT-quotient witness decomposition (tight): capacity ~2^116
+/// over the Q/q_l quotient witnesses; enforced bound 2^117 - 1.
 #[derive(Clone)]
-struct PFlow8192Params;
+struct PFlow8192CrtParams;
 
-impl DecompositionParams for PFlow8192Params {
-    const B: u128 = 1 << 15;
-    // The shifted decode witness reaches Delta (~154 bits), so retain enough
-    // base-B limbs for it and the CRT quotient witnesses (~116 bits).
-    const L: usize = 11;
+impl DecompositionParams for PFlow8192CrtParams {
+    const B: u128 = N8192_R7_CRT_B;
+    const L: usize = N8192_R7_CRT_L;
     const B_SMALL: usize = 2;
-    // P is a 176-bit field.
-    const K: usize = 177;
+    // log2(B); see PFlowCrtParams.
+    const K: usize = 13;
+}
+
+/// N=8192 R7 decode-noise witness decomposition (tight): capacity 2^149 over
+/// the ~2^145.6 centered noise; enforced bound 2^150 - 1 < Delta - E_true
+/// (headroom ~16x).
+#[derive(Clone)]
+struct PFlow8192DecodeParams;
+
+impl DecompositionParams for PFlow8192DecodeParams {
+    const B: u128 = N8192_R7_DECODE_B;
+    const L: usize = N8192_R7_DECODE_L;
+    const B_SMALL: usize = 2;
+    // log2(B); see PFlowCrtParams.
+    const K: usize = 10;
 }
 
 /// Sample a polynomial with small non-negative coefficients in `[0, bound)`.
@@ -236,6 +273,23 @@ macro_rules! define_flow_channel {
                     .iter()
                     .map(|&c| (((c as i128) % modulus + modulus) % modulus) as u64)
                     .collect()
+            }
+
+            fn pow_mod_u128(mut base: u128, mut exponent: u128, modulus: u128) -> u128 {
+                let mut result = 1u128;
+                base %= modulus;
+                while exponent != 0 {
+                    if exponent & 1 == 1 {
+                        result = result * base % modulus;
+                    }
+                    base = base * base % modulus;
+                    exponent >>= 1;
+                }
+                result
+            }
+
+            fn fermat_inverse_u128(value: u128, modulus: u128) -> u128 {
+                pow_mod_u128(value, modulus - 2, modulus)
             }
 
             /// Signed (i64) coefficient vector -> native NTT ring element.
@@ -509,8 +563,9 @@ macro_rules! define_flow_channel {
             }
 
             /// Prove the T parties' R6 instances and fold them into one
-            /// accumulator for this channel. The per-fold NIFS verifier
-            /// self-check is deferred by default (as in the R4 fold chain) and
+            /// accumulator for this channel, as a binary fold tree (same
+            /// total fold count as the sequential chain, log2(T) depth).
+            /// The per-node verifier self-check is deferred by default and
             /// re-enabled with `DKG_VERIFY_FOLDS=1`.
             pub fn prove_and_fold_r6(
                 instances: &[(CCCS<$ring>, Witness<$ring>)],
@@ -520,50 +575,21 @@ macro_rules! define_flow_channel {
             ) -> Result<(), Box<dyn Error>> {
                 let verify_folds = std::env::var_os("DKG_VERIFY_FOLDS").is_some();
 
-                let (cm0, witness0) = &instances[0];
-                let mut bootstrap_prover = ChannelTranscript::default();
-                absorb_config(&mut bootstrap_prover, config, 0xE6);
-                let (mut accumulator, _) =
-                    LFLinearizationProver::<$ring, ChannelTranscript>::prove(
-                        cm0,
-                        witness0,
-                        &mut bootstrap_prover,
-                        ccs,
-                    )?;
-                let mut accumulator_witness = witness0.clone();
-
-                let mut fold_prover = ChannelTranscript::default();
-                let mut fold_verifier = ChannelTranscript::default();
-                absorb_config(&mut fold_prover, config, 0xE6);
-                absorb_config(&mut fold_verifier, config, 0xE6);
-                for (index, (cm_i, witness_i)) in instances.iter().enumerate().skip(1) {
-                    let (new_accumulator, new_witness, proof) =
-                        NIFSProver::<$ring, $decomp, ChannelTranscript>::prove(
-                            &accumulator,
-                            &accumulator_witness,
-                            cm_i,
-                            witness_i,
-                            &mut fold_prover,
-                            ccs,
-                            scheme,
-                        )?;
-                    if verify_folds {
-                        let verified_accumulator =
-                            NIFSVerifier::<$ring, $decomp, ChannelTranscript>::verify(
-                                &accumulator,
-                                cm_i,
-                                &proof,
-                                &mut fold_verifier,
-                                ccs,
-                            )?;
-                        assert_eq!(
-                            new_accumulator, verified_accumulator,
-                            "R6 fold mismatch at {index}"
-                        );
+                // Bind every node to the committee config and, in order, to
+                // the 1-based party ids of the leaves (party 1..=T).
+                let absorb_label = |transcript: &mut ChannelTranscript| {
+                    absorb_config(transcript, config, 0xE6);
+                    for party in 1..=instances.len() as u64 {
+                        transcript.absorb(&<$ring>::from(party as u128));
                     }
-                    accumulator = new_accumulator;
-                    accumulator_witness = new_witness;
-                }
+                };
+                crate::nifs::tree::fold_tree::<$ring, $decomp, ChannelTranscript>(
+                    instances,
+                    ccs,
+                    scheme,
+                    &absorb_label,
+                    !verify_folds,
+                )?;
                 Ok(())
             }
 
@@ -582,6 +608,235 @@ macro_rules! define_flow_channel {
                 aggregate
             }
 
+            /// Run this channel's R1 phase for the committee and export the
+            /// C5 wrapper vectors (real aggregated witness, aggregate
+            /// commitment, CRS, digest, and off-circuit challenges).
+            pub fn export_c5_track(
+                samples: &[DealerSamples],
+                config: &CommitteeConfig,
+            ) -> Result<crate::wrapper_export::C5TrackExport, Box<dyn Error>> {
+                let mut rng = StdRng::seed_from_u64(
+                    config.session_id ^ ((CHANNEL as u64 + 1) << 40),
+                );
+                let a = <$ring>::rand(&mut rng);
+                let r1_ccs = CCS::from_r1cs(r1_r1cs(&a), R1_ROWS);
+                let r1_scheme = AjtaiCommitmentScheme::from_domain::<ChannelTranscript>(
+                    &format!("vdkg/r1/q{}/N{}", CHANNEL, degree()),
+                    KAPPA,
+                    (2 + ESM_LIMBS) * <$decomp>::L,
+                    degree(),
+                );
+
+                let mut pk0_agg = <$ring>::from(0u128);
+                let mut cm_acc: Option<crate::commitment::Commitment<$ring>> = None;
+                let mut sk_acc = vec![0i64; degree()];
+                let mut e_acc = vec![0i64; degree()];
+                let mut esm_limbs_acc = vec![vec![0i64; degree()]; ESM_LIMBS];
+                let mut digit_sums = vec![vec![0i64; degree()]; (2 + ESM_LIMBS) * <$decomp>::L];
+
+                for (index, dealer) in samples.iter().enumerate() {
+                    let limb_polys: Vec<Vec<i64>> = (0..degree())
+                        .map(|c| balanced_limbs(&dealer.e_sm[c], ESM_LIMBS))
+                        .collect();
+                    let mut esm_limbs: Vec<$ring> = Vec::with_capacity(ESM_LIMBS);
+                    for limb in 0..ESM_LIMBS {
+                        let poly: Vec<i64> = limb_polys.iter().map(|l| l[limb]).collect();
+                        for (acc, &d) in esm_limbs_acc[limb].iter_mut().zip(&poly) {
+                            *acc += d;
+                        }
+                        esm_limbs.push(signed_to_ntt(&poly)?);
+                    }
+                    let (pk0, cm, witness) = prove_r1(
+                        index as u64 + 1,
+                        &a,
+                        signed_to_ntt(&dealer.sk)?,
+                        signed_to_ntt(&dealer.e)?,
+                        &esm_limbs,
+                        &r1_ccs,
+                        &r1_scheme,
+                        config,
+                    )?;
+                    pk0_agg = pk0_agg + pk0;
+                    cm_acc = Some(match cm_acc {
+                        None => cm.cm,
+                        Some(acc) => acc + &cm.cm,
+                    });
+                    for (acc, &c) in sk_acc.iter_mut().zip(&dealer.sk) {
+                        *acc += c;
+                    }
+                    for (acc, &c) in e_acc.iter_mut().zip(&dealer.e) {
+                        *acc += c;
+                    }
+                    // The committed digit sums the aggregate commitment binds.
+                    for (j, poly) in witness.f_coeff.iter().enumerate() {
+                        for (acc, c) in digit_sums[j].iter_mut().zip(poly.coeffs()) {
+                            let v = c.into_bigint().as_ref()[0] as i64;
+                            *acc += if v > modulus() as i64 / 2 {
+                                v - modulus() as i64
+                            } else {
+                                v
+                            };
+                        }
+                    }
+                }
+
+                // §6.2 rank-1 outer commitment of the aggregate commitment.
+                let cm_acc = cm_acc.expect("at least one dealer");
+                let outer_scheme = AjtaiCommitmentScheme::from_domain::<ChannelTranscript>(
+                    &format!("vdkg/outer/q{}/N{}", CHANNEL, degree()),
+                    1,
+                    KAPPA * <$decomp>::L,
+                    degree(),
+                );
+                let digest_witness =
+                    Witness::from_w_ccs::<$decomp>(cm_acc.as_ref().to_vec());
+                let digest = outer_scheme.commit_ntt(&digest_witness.f)?;
+
+                // Evaluation-point challenge gamma for the coefficient-domain
+                // opening check (off-circuit, digest-derived; gamma^N != -1).
+                let tag = format!("vdkg/c5/q{}/N{}", CHANNEL, degree());
+                let r_sz = crate::wrapper_challenge::derive_field_challenges::<$ring, $challenge_set>(
+                    &tag,
+                    digest.as_ref(),
+                    1,
+                )[0];
+                let r_lin = crate::wrapper_challenge::derive_field_challenges::<$ring, $challenge_set>(
+                    &format!("{tag}/lin"),
+                    digest.as_ref(),
+                    4,
+                );
+                let rho = crate::wrapper_challenge::derive_field_challenges::<$ring, $challenge_set>(
+                    &format!("{tag}/rho"),
+                    digest.as_ref(),
+                    1,
+                )[0];
+                let gamma = crate::wrapper_challenge::derive_field_challenges::<$ring, $challenge_set>(
+                    &format!("{tag}/gamma"),
+                    digest.as_ref(),
+                    1,
+                )[0];
+
+                // ---- Evaluation bundle for the coefficient-domain opening
+                // check (plan §10's small final arithmetic step).
+                let eval_poly = |coeffs: &[u64], x: u64| -> u64 {
+                    let mut acc = 0u128;
+                    for &c in coeffs.iter().rev() {
+                        acc = (acc * x as u128 + c as u128) % modulus() as u128;
+                    }
+                    acc as u64
+                };
+                let gamma_u = gamma.into_bigint().as_ref()[0];
+                let gamma_n_plus_1 =
+                    (pow_mod_u128(gamma_u as u128, degree() as u128, modulus() as u128) + 1)
+                        % modulus() as u128;
+                let gamma_n_plus_1_inv =
+                    fermat_inverse_u128(gamma_n_plus_1, modulus() as u128) as u64;
+
+                // Ajtai matrix entries evaluated at gamma (iNTT to coefficient
+                // form, then Horner).
+                let a_gamma: Vec<Vec<u64>> = r1_scheme
+                    .matrix()
+                    .vals
+                    .iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|element| eval_poly(&ntt_to_coeffs(*element), gamma_u))
+                            .collect()
+                    })
+                    .collect();
+
+                // Quotient sums per row: Q_ij(gamma) = (A_ij(gamma) f_ij(gamma)
+                // - R_ij(gamma)) / (gamma^N + 1), R_ij the X^N+1-reduced
+                // product.
+                let digit_ntts: Vec<$ring> = digit_sums
+                    .iter()
+                    .map(|digits| signed_to_ntt(digits).expect("digit NTT"))
+                    .collect();
+                let f_gamma: Vec<u64> = digit_sums
+                    .iter()
+                    .map(|digits| {
+                        let canonical = signed_to_canonical(digits);
+                        eval_poly(&canonical, gamma_u)
+                    })
+                    .collect();
+                let mut q_sum_gamma = vec![0u64; KAPPA];
+                for (i, row) in r1_scheme.matrix().vals.iter().enumerate() {
+                    let mut acc = 0u128;
+                    for (j, element) in row.iter().enumerate() {
+                        let r_ntt = *element * digit_ntts[j];
+                        let r_coeffs = ntt_to_coeffs(r_ntt);
+                        let r_gamma = eval_poly(&r_coeffs, gamma_u) as u128;
+                        let term = (a_gamma[i][j] as u128 * f_gamma[j] as u128
+                            + modulus() as u128
+                            - r_gamma)
+                            * gamma_n_plus_1_inv as u128
+                            % modulus() as u128;
+                        acc = (acc + term) % modulus() as u128;
+                    }
+                    q_sum_gamma[i] = acc as u64;
+                }
+
+                // cm(gamma) per row (iNTT of the NTT-form commitment + Horner).
+                let cm_gamma: Vec<u64> = cm_acc
+                    .as_ref()
+                    .iter()
+                    .map(|element| eval_poly(&ntt_to_coeffs(*element), gamma_u))
+                    .collect();
+
+                // R1-row evals at gamma.
+                let a_gamma_crs = eval_poly(&ntt_to_coeffs(a), gamma_u);
+                let sk_canonical = signed_to_canonical(&sk_acc);
+                let e_canonical = signed_to_canonical(&e_acc);
+                let sk_gamma = eval_poly(&sk_canonical, gamma_u) as u128;
+                let e_gamma = eval_poly(&e_canonical, gamma_u) as u128;
+                let pk0_coeffs = ntt_to_coeffs(pk0_agg);
+                let pk0_gamma = eval_poly(&pk0_coeffs, gamma_u) as u128;
+                let q_r1_gamma = ((a_gamma_crs as u128 * sk_gamma
+                    + modulus() as u128
+                    - ((e_gamma + modulus() as u128 - pk0_gamma) % modulus() as u128))
+                    % modulus() as u128)
+                    * gamma_n_plus_1_inv as u128
+                    % modulus() as u128;
+
+                let to_u64 = |c: $field| c.into_bigint().as_ref()[0];
+                let (psi, omega) = crate::vdkg_params::ntt_roots::<$params>(CHANNEL);
+                Ok(crate::wrapper_export::C5TrackExport {
+                    channel: CHANNEL,
+                    modulus: modulus(),
+                    psi,
+                    omega,
+                    a_coeffs: ntt_to_coeffs(a),
+                    a_ntt: a.into_coeffs().into_iter().map(to_u64).collect(),
+                    sk_acc,
+                    e_acc,
+                    esm_limbs_acc,
+                    digit_sums,
+                    cm_acc_ntt: cm_acc
+                        .as_ref()
+                        .iter()
+                        .map(|element| element.into_coeffs().into_iter().map(to_u64).collect())
+                        .collect(),
+                    pk0_agg: pk0_agg.into_coeffs().into_iter().map(to_u64).collect(),
+                    digest_ntt: digest
+                        .as_ref()
+                        .iter()
+                        .flat_map(|element| element.into_coeffs().into_iter().map(to_u64))
+                        .collect(),
+                    r_sz: r_sz.into_bigint().as_ref()[0],
+                    r_lin: r_lin.into_iter().map(to_u64).collect(),
+                    rho: rho.into_bigint().as_ref()[0],
+                    gamma: gamma_u,
+                    f_gamma,
+                    a_gamma,
+                    q_sum_gamma,
+                    cm_gamma,
+                    a_gamma_crs,
+                    pk0_gamma: pk0_gamma as u64,
+                    q_r1_gamma: q_r1_gamma as u64,
+                })
+            }
+
+
             /// Run this channel's P1 -> P4 share of the full flow, returning
             /// the interpolated residue polynomial for the P reconstruction
             /// track.
@@ -595,7 +850,7 @@ macro_rules! define_flow_channel {
                 samples: &[DealerSamples],
                 sk_sharings: &ChannelSharings,
                 esm_sharings: &ChannelSharings,
-                transport: &ShareTransport<$params>,
+                transport: &crate::r3_bridge::R3Transport,
                 user_randomness: &[Vec<u64>; 3],
                 message: &[u64],
                 config: &CommitteeConfig,
@@ -661,16 +916,37 @@ macro_rules! define_flow_channel {
                     samples.len()
                 );
 
-                // ---- P1/R2 + R3 + R4: GRS sharing proofs, real BFV
+                // ---- P1/R2 + R3 + R4: GRS sharing proofs, proven R3 digit
                 // transport of the recipient's shares, folded metadata-bound
-                // openings (reusing the fhe_bridge committee path).
-                let decoded_sk =
-                    crate::fhe_bridge::$bridge::fold_committee_r4(transport, sk_sharings, config)?;
-                let decoded_esm = crate::fhe_bridge::$bridge::fold_committee_r4(
-                    transport,
-                    esm_sharings,
-                    config,
-                )?;
+                // openings (reusing the fhe_bridge committee path). The sk
+                // and e_sm tracks are independent, so they run concurrently.
+                const FLOW_STACK_SIZE: usize = 1 << 30;
+                let (decoded_sk, decoded_esm) = std::thread::scope(|scope| {
+                    let sk_handle = std::thread::Builder::new()
+                        .stack_size(FLOW_STACK_SIZE)
+                        .spawn_scoped(scope, || {
+                            crate::fhe_bridge::$bridge::fold_committee_r4(
+                                transport, sk_sharings, config, 0,
+                            )
+                            .map_err(|e| e.to_string())
+                        })
+                        .expect("failed to spawn sk track thread");
+                    let esm_result = crate::fhe_bridge::$bridge::fold_committee_r4(
+                        transport,
+                        esm_sharings,
+                        config,
+                        1,
+                    )
+                    .map_err(|e| e.to_string());
+                    (
+                        sk_handle
+                            .join()
+                            .unwrap_or_else(|_| Err("sk track thread panicked".to_string())),
+                        esm_result,
+                    )
+                });
+                let decoded_sk = decoded_sk?;
+                let decoded_esm = decoded_esm?;
                 println!(
                     "[q{CHANNEL}] P1/R2+R3+R4: {} sharings (sk + e_sm) proven, transported, folded",
                     sk_sharings.secrets.len()
@@ -782,31 +1058,59 @@ macro_rules! define_flow_channel {
 }
 
 macro_rules! define_p_track {
-    ($module:ident, $params:ty, $pdecomp:ty, $pring:ty, $ppoly:ty, $pfield:ty, $pcs:ty) => {
+    ($module:ident, $params:ty, $pcrt:ty, $pdec:ty, $pring:ty, $ppoly:ty, $pfield:ty, $pcs:ty) => {
         /// Reconstruction-track R7 over the P ring: CRT recombination with
-        /// quotient witnesses plus the BFV decode, proven natively.
+        /// quotient witnesses plus the BFV decode, proven natively as TWO
+        /// decide-directly instances with SEPARATE tight decompositions
+        /// (plan §5-R7 steps 3-4, §9.3):
+        ///
+        /// * the CRT instance binds `u` to the public channel residues via
+        ///   the quotient witnesses `u = u_l + s_l * q_l`, the quotients
+        ///   range-enforced by the tight decomposition `$pcrt` (capacity
+        ///   ~Q/q_l, enforced bound B'^L' - 1);
+        /// * the decode instance binds `u = Delta * m + e` with the centered
+        ///   rounding witness `e` range-enforced by the tight decomposition
+        ///   `$pdec` (capacity >= E_true, enforced bound < Delta - E_true).
+        ///
+        /// Both proofs run on ONE transcript (the decode proof's challenges
+        /// depend on the CRT proof), and the shared `u` is bound across the
+        /// two verifier outputs. The plaintext `m` is a PUBLIC input of the
+        /// decode instance; the range `m < t` is validated publicly (it is
+        /// the protocol output), which replaces the former prover-side
+        /// assert — the balanced decomposition cannot express the exact
+        /// asymmetric range [0, t) anyway. Neither instance is folded: at
+        /// the byte challenge set the fold slack (~2^13.6) would breach the
+        /// 2^10 envelope and empty the decode Delta-window (derivation in
+        /// vdkg_params::R7_EXTRACTION_SLACK).
         pub mod $module {
             use super::*;
 
             type PTranscript = PoseidonTranscript<$pring, $pcs>;
 
-            // z = [u, u0, u1, u2, m, one, r0, t1, t2, s0, s1, s2, e]
+            // CRT instance: z = [u, u0, u1, u2, one, r0, t1, t2, s0, s1, s2]
             const IDX_U: usize = 0;
             const IDX_U0: usize = 1;
             const IDX_U1: usize = 2;
             const IDX_U2: usize = 3;
-            const IDX_M: usize = 4;
-            const IDX_ONE: usize = 5;
-            const IDX_R0: usize = 6;
-            const IDX_T1: usize = 7;
-            const IDX_T2: usize = 8;
-            const IDX_S0: usize = 9;
-            const IDX_S1: usize = 10;
-            const IDX_S2: usize = 11;
-            const IDX_E: usize = 12;
-            const R7_COLS: usize = 13;
-            // >= 7 * L committed limbs, padded to a power of two.
-            const R7_ROWS: usize = (7 * <$pdecomp>::L).next_power_of_two();
+            const CRT_ONE: usize = 4;
+            const IDX_R0: usize = 5;
+            const IDX_T1: usize = 6;
+            const IDX_T2: usize = 7;
+            const IDX_S0: usize = 8;
+            const IDX_S1: usize = 9;
+            const IDX_S2: usize = 10;
+            const CRT_COLS: usize = 11;
+            // >= 6 * L' committed limbs, padded to a power of two.
+            const CRT_ROWS: usize = (6 * <$pcrt>::L).next_power_of_two();
+
+            // Decode instance: z = [u, m, one, e]
+            const DEC_U: usize = 0;
+            const DEC_M: usize = 1;
+            const DEC_ONE: usize = 2;
+            const DEC_E: usize = 3;
+            const DEC_COLS: usize = 4;
+            // >= L'' committed limbs, padded to a power of two.
+            const DEC_ROWS: usize = (<$pdec>::L).next_power_of_two();
 
             /// Build a P-ring element from wide-integer coefficients.
             pub fn p_ring_big(coeffs: &[BigUint]) -> Result<$pring, Box<dyn Error>> {
@@ -852,42 +1156,71 @@ macro_rules! define_p_track {
                 Ok(CRT::elementwise_crt(vec![polynomial])[0])
             }
 
-            /// The R7 relation (interpolation/CRT/decode) as an R1CS.
-            pub fn r7_r1cs() -> R1CS<$pring> {
+            /// Balanced capacity `(B/2) * (B^L - 1)/(B - 1)` of a tight
+            /// decomposition: the largest honestly decomposable magnitude.
+            fn tight_capacity<B: DecompositionParams>() -> BigUint {
+                let base = BigUint::from(B::B);
+                (base.clone() >> 1)
+                    * ((base.pow(B::L as u32) - BigUint::from(1u64))
+                        / (base - BigUint::from(1u64)))
+            }
+
+            /// The R7 CRT-reconstruction relation as an R1CS (Garner
+            /// recombination plus one quotient-witness row per channel).
+            pub fn r7_crt_r1cs() -> R1CS<$pring> {
                 let [q0, q1, q2] = <$params as VdkgParams>::THRESHOLD_MODULI;
                 let q0 = <$pring>::from(q0 as u128);
                 let q1 = <$pring>::from(q1 as u128);
                 let q2 = <$pring>::from(q2 as u128);
                 let q0q1 = q0 * q1;
-                let delta = <$pring>::from(<$pfield>::from(<$params as VdkgParams>::delta()));
                 let one = <$pring>::from(1u128);
 
-                let mut a_rows = vec![vec![]; R7_ROWS];
+                let mut a_rows = vec![vec![]; CRT_ROWS];
                 // Garner recombination: u = r0 + q0 * t1 + q0 * q1 * t2.
                 a_rows[0] = vec![(one, IDX_U), (-one, IDX_R0), (-q0, IDX_T1), (-q0q1, IDX_T2)];
                 // Quotient witnesses binding u to the public channel residues:
-                // u = u_l + s_l * q_l with s_l < Q / q_l.
+                // u = u_l + s_l * q_l with s_l < Q / q_l, range-enforced by
+                // the tight decomposition of the committed witness digits.
                 a_rows[1] = vec![(one, IDX_U), (-one, IDX_U0), (-q0, IDX_S0)];
                 a_rows[2] = vec![(one, IDX_U), (-one, IDX_U1), (-q1, IDX_S1)];
                 a_rows[3] = vec![(one, IDX_U), (-one, IDX_U2), (-q2, IDX_S2)];
-                // Decode for signed (centered) noise: u = Delta * m + e with
-                // e = u - Delta * m the CENTERED noise in (-Delta/2, Delta/2)
-                // (represented as a signed field element; balanced
-                // decomposition handles it).
-                a_rows[4] = vec![(one, IDX_U), (-delta, IDX_M), (-one, IDX_E)];
 
-                let mut b_rows = vec![vec![]; R7_ROWS];
-                for row in b_rows.iter_mut().take(5) {
-                    *row = vec![(one, IDX_ONE)];
+                let mut b_rows = vec![vec![]; CRT_ROWS];
+                for row in b_rows.iter_mut().take(4) {
+                    *row = vec![(one, CRT_ONE)];
                 }
                 R1CS::<$pring> {
-                    l: 5,
-                    A: SparseMatrix { nrows: R7_ROWS, ncols: R7_COLS, coeffs: a_rows },
-                    B: SparseMatrix { nrows: R7_ROWS, ncols: R7_COLS, coeffs: b_rows },
+                    l: 4,
+                    A: SparseMatrix { nrows: CRT_ROWS, ncols: CRT_COLS, coeffs: a_rows },
+                    B: SparseMatrix { nrows: CRT_ROWS, ncols: CRT_COLS, coeffs: b_rows },
                     C: SparseMatrix {
-                        nrows: R7_ROWS,
-                        ncols: R7_COLS,
-                        coeffs: vec![vec![]; R7_ROWS],
+                        nrows: CRT_ROWS,
+                        ncols: CRT_COLS,
+                        coeffs: vec![vec![]; CRT_ROWS],
+                    },
+                }
+            }
+
+            /// The R7 decode relation as an R1CS: u = Delta * m + e with
+            /// e = u - Delta * m the CENTERED noise in (-Delta/2, Delta/2),
+            /// range-enforced by the tight decomposition (enforced bound
+            /// < Delta - E_true so a wrong m admits no witness).
+            pub fn r7_decode_r1cs() -> R1CS<$pring> {
+                let delta = <$pring>::from(<$pfield>::from(<$params as VdkgParams>::delta()));
+                let one = <$pring>::from(1u128);
+
+                let mut a_rows = vec![vec![]; DEC_ROWS];
+                a_rows[0] = vec![(one, DEC_U), (-delta, DEC_M), (-one, DEC_E)];
+                let mut b_rows = vec![vec![]; DEC_ROWS];
+                b_rows[0] = vec![(one, DEC_ONE)];
+                R1CS::<$pring> {
+                    l: 2,
+                    A: SparseMatrix { nrows: DEC_ROWS, ncols: DEC_COLS, coeffs: a_rows },
+                    B: SparseMatrix { nrows: DEC_ROWS, ncols: DEC_COLS, coeffs: b_rows },
+                    C: SparseMatrix {
+                        nrows: DEC_ROWS,
+                        ncols: DEC_COLS,
+                        coeffs: vec![vec![]; DEC_ROWS],
                     },
                 }
             }
@@ -929,6 +1262,17 @@ macro_rules! define_p_track {
                 let mut message = Vec::with_capacity(degree);
                 let mut rounding = Vec::with_capacity(degree);
 
+                // Honest-execution completeness guards: the tight
+                // decompositions commit only witnesses within their balanced
+                // capacity, so check before decomposing (an out-of-capacity
+                // witness would otherwise panic inside the decomposition).
+                // These are NOT the soundness mechanism: the range
+                // enforcement comes from the committed digit decomposition
+                // itself plus the §9.3 margin (`r7_margin_holds`), so a
+                // cheating prover gains nothing by skipping these guards.
+                let capacity_crt = tight_capacity::<$pcrt>();
+                let capacity_dec = tight_capacity::<$pdec>();
+
                 for coefficient in 0..degree {
                     let residue = [
                         residues[0][coefficient],
@@ -945,7 +1289,7 @@ macro_rules! define_p_track {
                         % q2;
                     let value = BigUint::from(x01) + BigUint::from(q0q1) * BigUint::from(t2);
 
-                    quotient_s0.push(t1 + q1 * t2);
+                    quotient_s0.push(BigUint::from(t1 + q1 * t2));
                     quotient_s1.push(
                         (value.clone() - residue[1] as u128) / q1,
                     );
@@ -962,9 +1306,15 @@ macro_rules! define_p_track {
                     let e_signed = BigInt::from(value.clone() + &half)
                         - BigInt::from(&delta * &m_big)
                         - &half_int;
-                    if num_traits::Signed::abs(&e_signed) > half_int || m_big >= BigUint::from(t) {
+                    if m_big >= BigUint::from(t) {
                         return Err(format!(
-                            "decode failure at coefficient {coefficient}: centered rounding witness out of range"
+                            "decode failure at coefficient {coefficient}: decoded plaintext out of range"
+                        )
+                        .into());
+                    }
+                    if num_traits::Signed::abs(&e_signed) > BigInt::from(capacity_dec.clone()) {
+                        return Err(format!(
+                            "decode failure at coefficient {coefficient}: centered rounding witness exceeds the tight decomposition capacity"
                         )
                         .into());
                     }
@@ -975,6 +1325,19 @@ macro_rules! define_p_track {
                             .map_err(|_| "decoded plaintext exceeds the message space")?,
                     );
                     rounding.push(e_signed);
+                }
+                // CRT quotient completeness guard (all coefficients).
+                for (name, quotients) in [
+                    ("s0", &quotient_s0),
+                    ("s1", &quotient_s1),
+                    ("s2", &quotient_s2),
+                ] {
+                    if quotients.iter().any(|quotient| quotient >= &capacity_crt) {
+                        return Err(format!(
+                            "CRT quotient witness {name} exceeds the tight decomposition capacity"
+                        )
+                        .into());
+                    }
                 }
 
                 let residue_u128 = |channel: usize| {
@@ -993,69 +1356,67 @@ macro_rules! define_p_track {
                         .map(|&value| value as u128)
                         .collect::<Vec<_>>(),
                 )?;
-                let witness_r = vec![
+                let witness_crt = vec![
                     u0_r, // r0 = u mod q0 is the channel-0 residue itself
                     p_ring_u128(&garner_t1)?,
                     p_ring_u128(&garner_t2)?,
-                    p_ring_u128(&quotient_s0)?,
+                    p_ring_big(&quotient_s0)?,
                     p_ring_big(&quotient_s1)?,
                     p_ring_big(&quotient_s2)?,
-                    p_ring_signed(&rounding)?,
                 ];
+                let witness_dec = vec![p_ring_signed(&rounding)?];
 
-                let ccs = CCS::from_r1cs(r7_r1cs(), R7_ROWS);
-                let z = [
-                    &[u_r, u0_r, u1_r, u2_r, m_r, <$pring>::from(1u128)][..],
-                    &witness_r[..],
+                let ccs_crt = CCS::from_r1cs(r7_crt_r1cs(), CRT_ROWS);
+                let ccs_dec = CCS::from_r1cs(r7_decode_r1cs(), DEC_ROWS);
+                let z_crt = [
+                    &[u_r, u0_r, u1_r, u2_r, <$pring>::from(1u128)][..],
+                    &witness_crt[..],
+                ]
+                .concat();
+                let z_dec = [
+                    &[u_r, m_r, <$pring>::from(1u128)][..],
+                    &witness_dec[..],
                 ]
                 .concat();
                 if std::env::var_os("DKG_DEBUG_R7").is_some() {
-                    let half_ring = <$pring>::from(<$pfield>::from(
-                        <$params as VdkgParams>::delta() / 2u64,
-                    ));
                     let delta_ring = <$pring>::from(<$pfield>::from(
                         <$params as VdkgParams>::delta(),
                     ));
-                    let row4 = u_r + half_ring - delta_ring * m_r - witness_r[6];
-                    let row4_coeffs = ICRT::elementwise_icrt(vec![row4])[0].coeffs().to_vec();
-                    let nonzero = row4_coeffs
+                    let row_dec = u_r - delta_ring * m_r - witness_dec[0];
+                    let nonzero = ICRT::elementwise_icrt(vec![row_dec])[0]
+                        .coeffs()
                         .iter()
                         .enumerate()
                         .filter(|(_, c)| c.into_bigint().0[0] != 0 || c.into_bigint().0[1] != 0)
                         .map(|(i, c)| (i, c.into_bigint().to_string()))
                         .take(5)
                         .collect::<Vec<_>>();
-                    eprintln!("[r7-debug] row4 nonzero coeffs (first 5): {nonzero:?}");
-                    let u0c = ICRT::elementwise_icrt(vec![u_r])[0].coeffs()[0].into_bigint();
-                    let m0c = ICRT::elementwise_icrt(vec![m_r])[0].coeffs()[0].into_bigint();
-                    let e0c = ICRT::elementwise_icrt(vec![witness_r[6]])[0].coeffs()[0]
-                        .into_bigint();
-                    eprintln!("[r7-debug] u[0]={u0c} m[0]={m0c} e[0]={e0c}");
-                    let c = |r: $pring, i: usize| {
-                        ICRT::elementwise_icrt(vec![r])[0].coeffs()[i].into_bigint()
-                    };
-                    eprintln!(
-                        "[r7-debug] u[1]={} m[1]={} e[1]={} half_ring[0]={} half_ring[1]={} delta_ring[1]={}",
-                        c(u_r, 1),
-                        c(m_r, 1),
-                        c(witness_r[6], 1),
-                        c(half_ring, 0),
-                        c(half_ring, 1),
-                        c(delta_ring, 1)
-                    );
+                    eprintln!("[r7-debug] decode-row nonzero coeffs (first 5): {nonzero:?}");
                 }
-                ccs.check_relation(&z)?;
+                ccs_crt.check_relation(&z_crt)?;
+                ccs_dec.check_relation(&z_dec)?;
 
-                let scheme = AjtaiCommitmentScheme::from_domain::<PTranscript>(
-                    &format!("vdkg/r7/P/N{}", <$params as VdkgParams>::DEGREE),
+                let scheme_crt = AjtaiCommitmentScheme::from_domain::<PTranscript>(
+                    &format!("vdkg/r7crt/P/N{}", <$params as VdkgParams>::DEGREE),
                     KAPPA,
-                    7 * <$pdecomp>::L,
+                    6 * <$pcrt>::L,
                     <$params as VdkgParams>::DEGREE,
                 );
-                let witness = Witness::from_w_ccs::<$pdecomp>(witness_r);
-                let cm = CCCS {
-                    cm: witness.commit::<$pdecomp>(&scheme)?,
-                    x_ccs: vec![u_r, u0_r, u1_r, u2_r, m_r],
+                let scheme_dec = AjtaiCommitmentScheme::from_domain::<PTranscript>(
+                    &format!("vdkg/r7dec/P/N{}", <$params as VdkgParams>::DEGREE),
+                    KAPPA,
+                    <$pdec>::L,
+                    <$params as VdkgParams>::DEGREE,
+                );
+                let witness_crt = Witness::from_w_ccs::<$pcrt>(witness_crt);
+                let witness_dec = Witness::from_w_ccs::<$pdec>(witness_dec);
+                let cm_crt = CCCS {
+                    cm: witness_crt.commit::<$pcrt>(&scheme_crt)?,
+                    x_ccs: vec![u_r, u0_r, u1_r, u2_r],
+                };
+                let cm_dec = CCCS {
+                    cm: witness_dec.commit::<$pdec>(&scheme_dec)?,
+                    x_ccs: vec![u_r, m_r],
                 };
 
                 let absorb = |transcript: &mut PTranscript| {
@@ -1069,28 +1430,64 @@ macro_rules! define_p_track {
                         transcript.absorb(&<$pring>::from(value as u128));
                     }
                 };
+                // One transcript for both instances: the CRT instance is
+                // proven first, so the decode proof's challenges depend on
+                // the whole CRT proof (cross-binding); the commitment and
+                // public input of each instance are absorbed by the shared
+                // linearization code (no double-absorb here).
                 let mut prover_transcript = PTranscript::default();
                 absorb(&mut prover_transcript);
-                let (prover_lcccs, proof) = LFLinearizationProver::<$pring, PTranscript>::prove(
-                    &cm,
-                    &witness,
-                    &mut prover_transcript,
-                    &ccs,
-                )?;
+                let (prover_lcccs_crt, proof_crt) =
+                    LFLinearizationProver::<$pring, PTranscript>::prove(
+                        &cm_crt,
+                        &witness_crt,
+                        &mut prover_transcript,
+                        &ccs_crt,
+                    )?;
+                let (prover_lcccs_dec, proof_dec) =
+                    LFLinearizationProver::<$pring, PTranscript>::prove(
+                        &cm_dec,
+                        &witness_dec,
+                        &mut prover_transcript,
+                        &ccs_dec,
+                    )?;
                 let mut verifier_transcript = PTranscript::default();
                 absorb(&mut verifier_transcript);
-                let verifier_lcccs = LFLinearizationVerifier::<$pring, PTranscript>::verify(
-                    &cm,
-                    &proof,
-                    &mut verifier_transcript,
-                    &ccs,
-                )?;
-                assert_eq!(prover_lcccs, verifier_lcccs, "R7 linearization mismatch");
+                let verifier_lcccs_crt =
+                    LFLinearizationVerifier::<$pring, PTranscript>::verify(
+                        &cm_crt,
+                        &proof_crt,
+                        &mut verifier_transcript,
+                        &ccs_crt,
+                    )?;
+                let verifier_lcccs_dec =
+                    LFLinearizationVerifier::<$pring, PTranscript>::verify(
+                        &cm_dec,
+                        &proof_dec,
+                        &mut verifier_transcript,
+                        &ccs_dec,
+                    )?;
+                assert_eq!(prover_lcccs_crt, verifier_lcccs_crt, "R7 CRT linearization mismatch");
                 assert_eq!(
-                    verifier_lcccs.x_w,
-                    vec![u_r, u0_r, u1_r, u2_r, m_r],
-                    "R7 verifier output was not bound to the public reconstruction"
+                    prover_lcccs_dec, verifier_lcccs_dec,
+                    "R7 decode linearization mismatch"
                 );
+                assert_eq!(
+                    verifier_lcccs_crt.x_w,
+                    vec![u_r, u0_r, u1_r, u2_r],
+                    "R7 CRT verifier output was not bound to the public reconstruction"
+                );
+                assert_eq!(
+                    verifier_lcccs_dec.x_w,
+                    vec![u_r, m_r],
+                    "R7 decode verifier output was not bound to the public decode"
+                );
+                // Public-input validation of the plaintext range: m is the
+                // protocol output, so m < t is checked by every consumer of
+                // this artifact (replacing the former prover-side assert).
+                if message.iter().any(|&coefficient| coefficient >= t as u64) {
+                    return Err("decoded plaintext outside the message space".into());
+                }
                 Ok(message)
             }
         }
@@ -1134,7 +1531,10 @@ macro_rules! define_run_full_flow {
                 return Err("message does not fit the threshold plaintext modulus".into());
             }
 
-            let mut rng = ark_std::test_rng();
+            // OS CSPRNG: the Shamir sharing coefficients and the user
+            // encryption randomness below are secret protocol randomness and
+            // must not come from a deterministic public seed.
+            let mut rng = ark_std::rand::rngs::OsRng;
             let dealers = config.honest_h;
             // Real fhe.rs production distributions: ternary sk, CBD errors,
             // TRBFV smudging noise at lambda=50 (wide: limb-decomposed in R1,
@@ -1195,7 +1595,11 @@ macro_rules! define_run_full_flow {
                 sample_short_poly::<$params>(2, &mut rng),
             ];
 
-            let transport = ShareTransport::<$params>::new()?;
+            // One recipient individual key shared across all channels (R0:
+            // the same key is referenced by every R3 proof on every channel).
+            let transport = crate::r3_bridge::R3Transport::new(
+                <$params as VdkgParams>::DEGREE,
+            )?;
 
             // The three channels share only read-only data, so their proof
             // chains run concurrently. The fold chains are deep, so give each
@@ -1289,8 +1693,8 @@ pub mod n4096_flow {
         N4096Q2ChallengeSet, 2
     );
     define_p_track!(
-        p_track, N4096Params, PFlowParams, N4096PRingNTT, N4096PRingPoly, N4096PField,
-        N4096PChallengeSet
+        p_track, N4096Params, PFlowCrtParams, PFlowDecodeParams, N4096PRingNTT,
+        N4096PRingPoly, N4096PField, N4096PChallengeSet
     );
     define_run_full_flow!(N4096Params, q0, q1, q2, p_track);
 }
@@ -1311,8 +1715,8 @@ pub mod n8192_flow {
         N8192Q2Field, N8192Q2ChallengeSet, 2
     );
     define_p_track!(
-        p_track, N8192Params, PFlow8192Params, N8192PRingNTT, N8192PRingPoly, N8192PField,
-        N8192PChallengeSet
+        p_track, N8192Params, PFlow8192CrtParams, PFlow8192DecodeParams, N8192PRingNTT,
+        N8192PRingPoly, N8192PField, N8192PChallengeSet
     );
     define_run_full_flow!(N8192Params, q0, q1, q2, p_track);
 }
@@ -1328,33 +1732,210 @@ mod tests {
     /// (fast: no committee, no committee threads).
     #[test]
     fn r7_decode_row_is_consistent() {
-        // Values from a real flow debug print (N=4096 set).
-        let config = CommitteeConfig::default();
-        let [q0, q1, q2] = N4096Params::THRESHOLD_MODULI;
-        let delta = N4096Params::delta();
-        let half = &delta / 2u64;
-        let m_true = 7u128;
-        let noise = 12345u128;
-        let u = &delta * m_true + noise - &half; // u + half = delta*m_true + noise
-        // residues u mod q_l
-        let u_big = u.clone();
-        let residues = [
-            (u_big.clone() % q0).iter_u64_digits().next().unwrap_or(0),
-            (u_big.clone() % q1).iter_u64_digits().next().unwrap_or(0),
-            (u_big.clone() % q2).iter_u64_digits().next().unwrap_or(0),
-        ];
-        let mut res = residues.map(|r| vec![0u64; N4096Params::DEGREE]);
-        res[0][0] = residues[0];
-        res[1][0] = residues[1];
-        res[2][0] = residues[2];
-        // prove_r7 must accept and decode m_true at coefficient 0 (others are 0).
-        let decoded = n4096_flow::p_track::prove_r7(&res, &config).expect("prove_r7 failed");
-        assert_eq!(decoded[0], m_true as u64);
-        assert!(decoded[1..].iter().all(|&m| m == 0));
+        // The R7 machinery keeps degree-N, multi-limb P-ring elements on the
+        // stack; run on a large-stack thread like the full flow does.
+        std::thread::Builder::new()
+            .stack_size(1 << 30)
+            .spawn(|| {
+                // Known-good coefficient set (N=4096 set): a centered SIGNED
+                // rounding witness e = -2^70, inside the tight decode
+                // decomposition capacity 2^83 (the previous synthetic noise
+                // ~Delta/2 encoded the OLD unsound acceptance region; the
+                // tight decomposition enforces |e| << Delta/2 so a wrong
+                // plaintext admits no witness).
+                let config = CommitteeConfig::default();
+                let [q0, q1, q2] = N4096Params::THRESHOLD_MODULI;
+                let delta = N4096Params::delta();
+                let m_true = 7u128;
+                let noise = 1u128 << 70;
+                let u = &delta * m_true - &noise; // e = u - delta*m_true = -2^70
+                // residues u mod q_l
+                let u_big = u.clone();
+                let residues = [
+                    (u_big.clone() % q0).iter_u64_digits().next().unwrap_or(0),
+                    (u_big.clone() % q1).iter_u64_digits().next().unwrap_or(0),
+                    (u_big.clone() % q2).iter_u64_digits().next().unwrap_or(0),
+                ];
+                let mut res = residues.map(|r| vec![0u64; N4096Params::DEGREE]);
+                res[0][0] = residues[0];
+                res[1][0] = residues[1];
+                res[2][0] = residues[2];
+                // prove_r7 must accept and decode m_true at coefficient 0 (others are 0).
+                let decoded = n4096_flow::p_track::prove_r7(&res, &config).expect("prove_r7 failed");
+                assert_eq!(decoded[0], m_true as u64);
+                assert!(decoded[1..].iter().all(|&m| m == 0));
+            })
+            .expect("failed to spawn R7 test thread")
+            .join()
+            .expect("R7 test thread panicked");
+    }
+
+    /// Negative test: a FORGED u_global (off by one from the CRT value of
+    /// the public residues) and a forged plaintext (off by one) each close
+    /// the bare mod-P relations with prover-chosen FULL-RANGE witnesses —
+    /// and each is rejected by the tight decomposition, demonstrating that
+    /// the range enforcement (not the mod-P equality) is load-bearing.
+    #[test]
+    fn r7_forged_witnesses_are_rejected_by_tight_decomposition() {
+        std::thread::Builder::new()
+            .stack_size(1 << 30)
+            .spawn(|| {
+                use n4096_flow::p_track::*;
+
+                let [q0, q1, q2] = N4096Params::THRESHOLD_MODULI.map(u128::from);
+                let p_mod = BigUint::from(N4096_RECONSTRUCTION_MODULUS);
+                let delta = N4096Params::delta();
+                let capacity = |base: u128, limbs: usize| {
+                    let base = BigUint::from(base);
+                    (base.clone() >> 1)
+                        * ((base.pow(limbs as u32) - BigUint::from(1u64))
+                            / (base - BigUint::from(1u64)))
+                };
+                let capacity_crt = capacity(N4096_R7_CRT_B, N4096_R7_CRT_L);
+                let capacity_dec = capacity(N4096_R7_DECODE_B, N4096_R7_DECODE_L);
+
+                // Honest value u = Delta*5 + 42, its residues, and the
+                // forgery u' = u + 1 (inconsistent with the residues).
+                let u = &delta * 5u128 + 42u128;
+                let residues = [u.clone() % q0, u.clone() % q1, u.clone() % q2];
+                let forged = &u + 1u64;
+                assert!(
+                    [q0, q1, q2]
+                        .iter()
+                        .any(|&ql| (forged.clone() - (&u % ql)) % ql != BigUint::from(0u64)),
+                    "u + 1 must be inconsistent with at least one residue"
+                );
+
+                // --- (i) CRT forgery closes mod P with full-range quotients.
+                let forged_quotients: Vec<BigUint> = [q0, q1, q2]
+                    .iter()
+                    .zip(&residues)
+                    .map(|(&ql, residue)| {
+                        let ql_big = BigUint::from(ql);
+                        let inverse = ql_big.modpow(&(&p_mod - 2u64), &p_mod);
+                        (forged.clone() - residue) * inverse % &p_mod
+                    })
+                    .collect();
+                // Full-range: the forged quotients exceed the tight capacity
+                // (the honest Q/q_l bound ~2^66) for at least one channel.
+                assert!(
+                    forged_quotients.iter().any(|fq| fq >= &capacity_crt),
+                    "forged quotients must exceed the tight decomposition capacity"
+                );
+                // Honest quotients fit (sanity).
+                for (&ql, residue) in [q0, q1, q2].iter().zip(&residues) {
+                    assert!((&u - residue) / ql < capacity_crt, "honest quotient fits");
+                }
+
+                // The bare CRT relation closes over R_P with the forged
+                // witnesses — only the decomposition catches it.
+                // (N4096: CRT_ROWS = next_pow2(6*4) = 32.)
+                let ccs_crt = CCS::from_r1cs(r7_crt_r1cs(), 32);
+                let one = p_ring_u128(&[1]).unwrap();
+                // Garner digits of the forgery (recomputed honestly).
+                let r0_f = forged.clone() % q0;
+                let t1_f = (forged.clone() % q1 + q1 - r0_f.clone() % q1)
+                    * BigUint::from(fermat_inverse(q0, q1))
+                    % q1;
+                let x01_f = r0_f.clone() + q0 * &t1_f;
+                let t2_f = (forged.clone() % q2 + q2 - x01_f.clone() % q2)
+                    * BigUint::from(fermat_inverse(q0 * q1 % q2, q2))
+                    % q2;
+                assert_eq!(
+                    &r0_f + q0 * &t1_f + q0 * q1 * &t2_f,
+                    forged.clone(),
+                    "Garner digits must reconstruct the forgery"
+                );
+                let z_forged = vec![
+                    p_ring_big(&[forged.clone()]).unwrap(),
+                    p_ring_big(&[residues[0].clone()]).unwrap(),
+                    p_ring_big(&[residues[1].clone()]).unwrap(),
+                    p_ring_big(&[residues[2].clone()]).unwrap(),
+                    one,
+                    p_ring_big(&[r0_f]).unwrap(),
+                    p_ring_big(&[t1_f]).unwrap(),
+                    p_ring_big(&[t2_f]).unwrap(),
+                    p_ring_big(&[forged_quotients[0].clone()]).unwrap(),
+                    p_ring_big(&[forged_quotients[1].clone()]).unwrap(),
+                    p_ring_big(&[forged_quotients[2].clone()]).unwrap(),
+                ];
+                assert!(
+                    ccs_crt.check_relation(&z_forged).is_ok(),
+                    "mod-P relation closes for forged quotients (vacuity without range enforcement)"
+                );
+
+                // --- (ii) Decode forgery: m' = m + 1 forces e' = e - Delta.
+                let forged_m = 6u128;
+                let e_forged =
+                    BigInt::from(u.clone()) - BigInt::from(&delta * BigUint::from(forged_m));
+                assert!(
+                    num_traits::Signed::abs(&e_forged) > BigInt::from(capacity_dec.clone()),
+                    "forged decode witness must exceed the tight capacity"
+                );
+                // (N4096: DEC_ROWS = next_pow2(7) = 8.)
+                let ccs_dec = CCS::from_r1cs(r7_decode_r1cs(), 8);
+                let z_dec_forged = vec![
+                    p_ring_big(&[u.clone()]).unwrap(),
+                    p_ring_u128(&[forged_m]).unwrap(),
+                    p_ring_u128(&[1]).unwrap(),
+                    p_ring_signed(&[e_forged]).unwrap(),
+                ];
+                assert!(
+                    ccs_dec.check_relation(&z_dec_forged).is_ok(),
+                    "mod-P decode row closes for the forged plaintext (vacuity)"
+                );
+            })
+            .expect("failed to spawn R7 negative-test thread")
+            .join()
+            .expect("R7 negative-test thread panicked");
+    }
+
+    /// N=8192 smoke test of the R7 P track (new reconstruction prime): two
+    /// nonzero coefficients with signed rounding witnesses inside the tight
+    /// decode capacity, decoded through the new P-ring NTT and both tight
+    /// decompositions.
+    #[test]
+    fn r7_n8192_decode_smoke() {
+        std::thread::Builder::new()
+            .stack_size(1 << 30)
+            .spawn(|| {
+                let config = CommitteeConfig::default();
+                let [q0, q1, q2] = N8192Params::THRESHOLD_MODULI;
+                let delta = N8192Params::delta();
+                // Coefficient 0: negative noise; coefficient 1: large
+                // positive noise (still inside the tight capacity 2^149).
+                let u0: BigUint = &delta * 3u128 - (BigUint::from(1u64) << 100);
+                let u1: BigUint = &delta * 5u128 + (BigUint::from(1u64) << 140);
+                let mut res = [
+                    vec![0u64; N8192Params::DEGREE],
+                    vec![0u64; N8192Params::DEGREE],
+                    vec![0u64; N8192Params::DEGREE],
+                ];
+                for (channel, modulus) in [q0, q1, q2].into_iter().enumerate() {
+                    res[channel][0] = (u0.clone() % modulus)
+                        .iter_u64_digits()
+                        .next()
+                        .unwrap_or(0);
+                    res[channel][1] = (u1.clone() % modulus)
+                        .iter_u64_digits()
+                        .next()
+                        .unwrap_or(0);
+                }
+                let decoded =
+                    n8192_flow::p_track::prove_r7(&res, &config).expect("prove_r7 failed");
+                assert_eq!(decoded[0], 3);
+                assert_eq!(decoded[1], 5);
+                assert!(decoded[2..].iter().all(|&m| m == 0));
+            })
+            .expect("failed to spawn R7 N8192 smoke-test thread")
+            .join()
+            .expect("R7 N8192 smoke-test thread panicked");
     }
 
     use crate::vdkg_params::{
         N4096_THRESHOLD_PLAINTEXT_MODULUS, N4096_THRESHOLD_MODULI,
+        N4096_RECONSTRUCTION_MODULUS, N4096_R7_CRT_B, N4096_R7_CRT_L, N4096_R7_DECODE_B,
+        N4096_R7_DECODE_L,
     };
     use stark_rings::cyclotomic_ring::ICRT;
 
