@@ -11,20 +11,21 @@
 //! Run with Rust 1.91.1 and the opt-in feature:
 //!   cargo +1.91.1 run --release --example dkg_fhe_r3 --features fhe-bridge,parallel
 //!   cargo +1.91.1 run --release --example dkg_fhe_r3 --features fhe-bridge,parallel \
-//!     -- --dealers 5 --degree 8192
+//!     -- --dealers 5
 
 #[cfg(feature = "fhe-bridge")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Install a large-stack rayon pool before any witness work (the fold and
-    // decomposition paths overflow the default 2 MiB rayon stack at N=8192).
+    // decomposition paths overflow the default 2 MiB rayon stack at N=16384).
     latticefold::fhe_bridge::ensure_large_rayon_stack();
 
     use ark_ff::PrimeField;
-    use cyclotomic_rings::rings::{N8192Q0RingPoly, N8192Q0Field};
+    use cyclotomic_rings::rings::{N16384Q0Field, N16384Q0RingPoly};
     use latticefold::{
         arith::Witness,
         decomposition_parameters::DecompositionParams,
-        r3_bridge::{digit_decode, digit_encode, n8192_s0, n8192_s1, R3Transport},
+        r3_bridge::{digit_decode, digit_encode, n16384_s0, n16384_s1, R3Transport},
+        vdkg_params::PROD_THRESHOLD_MODULI,
     };
     use rand::RngCore;
     use stark_rings::{cyclotomic_ring::CRT, PolyRing};
@@ -50,11 +51,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         const B: u128 = 1 << 15;
         const L: usize = 5;
         const B_SMALL: usize = 2;
-        const K: usize = 59;
+        const K: usize = 66;
     }
 
-    const DEGREE: usize = 8192;
-    const Q0: u64 = 0x03fffffffea00001; // threshold channel q0 (share domain)
+    const DEGREE: usize = 16384;
+    const Q0: u64 = PROD_THRESHOLD_MODULI[0]; // threshold channel q0 (share domain)
     let digits_l = ShareDecomp::L;
     println!(
         "R3 — {dealers} dealers x {digits_l} digits x 2 transport primes, degree {DEGREE}\n\
@@ -67,14 +68,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // OS CSPRNG: dealer shares are secret protocol randomness.
     let mut rng = ark_std::rand::rngs::OsRng;
     let (s0_ccs, s0_scheme) = {
-        let pk0 = n8192_s0::coeffs_to_ntt(&pk0_rows[0])?;
-        let pk1 = n8192_s0::coeffs_to_ntt(&pk1_rows[0])?;
-        n8192_s0::r3_context(&pk0, &pk1)
+        let pk0 = n16384_s0::coeffs_to_ntt(&pk0_rows[0])?;
+        let pk1 = n16384_s0::coeffs_to_ntt(&pk1_rows[0])?;
+        n16384_s0::r3_context(&pk0, &pk1)
     };
     let (s1_ccs, s1_scheme) = {
-        let pk0 = n8192_s1::coeffs_to_ntt(&pk0_rows[1])?;
-        let pk1 = n8192_s1::coeffs_to_ntt(&pk1_rows[1])?;
-        n8192_s1::r3_context(&pk0, &pk1)
+        let pk0 = n16384_s1::coeffs_to_ntt(&pk0_rows[1])?;
+        let pk1 = n16384_s1::coeffs_to_ntt(&pk1_rows[1])?;
+        n16384_s1::r3_context(&pk0, &pk1)
     };
 
     let start_all = std::time::Instant::now();
@@ -87,11 +88,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // One full-range share per dealer (uniform mod the threshold q0).
         let share: Vec<u64> = (0..DEGREE).map(|_| rng.next_u64() % Q0).collect();
         let share_ntt = {
-            let poly = N8192Q0RingPoly::from(
+            let poly = N16384Q0RingPoly::from(
                 share
                     .iter()
                     .copied()
-                    .map(N8192Q0Field::from)
+                    .map(N16384Q0Field::from)
                     .collect::<Vec<_>>(),
             );
             CRT::elementwise_crt(vec![poly])[0]
@@ -131,25 +132,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let e1_rows = R3Transport::witness_coefficients(&e1);
             let e2_rows = R3Transport::witness_coefficients(&e2);
 
-            let m_s0 = n8192_s0::signed_to_ntt(digit_poly)?;
-            let m_s1 = n8192_s1::signed_to_ntt(digit_poly)?;
+            let m_s0 = n16384_s0::signed_to_ntt(digit_poly)?;
+            let m_s1 = n16384_s1::signed_to_ntt(digit_poly)?;
             let t1 = std::time::Instant::now();
-            s0_instances.push(n8192_s0::r3_instance(
-                &n8192_s0::coeffs_to_ntt(&ct0_rows[0])?,
-                &n8192_s0::coeffs_to_ntt(&ct1_rows[0])?,
-                n8192_s0::coeffs_to_ntt(&u_rows[0])?,
-                n8192_s0::coeffs_to_ntt(&e1_rows[0])?,
-                n8192_s0::coeffs_to_ntt(&e2_rows[0])?,
+            s0_instances.push(n16384_s0::r3_instance(
+                &n16384_s0::coeffs_to_ntt(&ct0_rows[0])?,
+                &n16384_s0::coeffs_to_ntt(&ct1_rows[0])?,
+                n16384_s0::coeffs_to_ntt(&u_rows[0])?,
+                n16384_s0::coeffs_to_ntt(&e1_rows[0])?,
+                n16384_s0::coeffs_to_ntt(&e2_rows[0])?,
                 m_s0,
                 &s0_ccs,
                 &s0_scheme,
             )?);
-            s1_instances.push(n8192_s1::r3_instance(
-                &n8192_s1::coeffs_to_ntt(&ct0_rows[1])?,
-                &n8192_s1::coeffs_to_ntt(&ct1_rows[1])?,
-                n8192_s1::coeffs_to_ntt(&u_rows[1])?,
-                n8192_s1::coeffs_to_ntt(&e1_rows[1])?,
-                n8192_s1::coeffs_to_ntt(&e2_rows[1])?,
+            s1_instances.push(n16384_s1::r3_instance(
+                &n16384_s1::coeffs_to_ntt(&ct0_rows[1])?,
+                &n16384_s1::coeffs_to_ntt(&ct1_rows[1])?,
+                n16384_s1::coeffs_to_ntt(&u_rows[1])?,
+                n16384_s1::coeffs_to_ntt(&e1_rows[1])?,
+                n16384_s1::coeffs_to_ntt(&e2_rows[1])?,
                 m_s1,
                 &s1_ccs,
                 &s1_scheme,
@@ -197,14 +198,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let h0 = std::thread::Builder::new()
             .stack_size(1 << 30)
             .spawn_scoped(scope, || {
-                n8192_s0::prove_and_fold_r3(&s0_instances, &s0_ccs, &s0_scheme, 0x30)
+                n16384_s0::prove_and_fold_r3(&s0_instances, &s0_ccs, &s0_scheme, 0x30)
                     .map_err(|e| e.to_string())
             })
             .expect("spawn s0 fold");
         let h1 = std::thread::Builder::new()
             .stack_size(1 << 30)
             .spawn_scoped(scope, || {
-                n8192_s1::prove_and_fold_r3(&s1_instances, &s1_ccs, &s1_scheme, 0x31)
+                n16384_s1::prove_and_fold_r3(&s1_instances, &s1_ccs, &s1_scheme, 0x31)
                     .map_err(|e| e.to_string())
             })
             .expect("spawn s1 fold");

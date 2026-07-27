@@ -1,10 +1,11 @@
 use ark_crypto_primitives::sponge::poseidon::{find_poseidon_ark_and_mds, PoseidonConfig};
 use ark_ff::PrimeField;
-use stark_rings::cyclotomic_ring::models::n4096::{Fq3, Fq0, Fq1, Fq2, FqP, FqS0, FqS1};
+use stark_rings::cyclotomic_ring::models::n16384::{Fq0, Fq1, Fq2, Fq3, FqP, FqS0, FqS1};
 
 use crate::rings::{
-    GetPoseidonParams, N4096PPoseidonConfig, N4096Q0PoseidonConfig, N4096Q1PoseidonConfig,
-    N4096Q2PoseidonConfig, N4096Q3PoseidonConfig, N4096S0PoseidonConfig, N4096S1PoseidonConfig,
+    GetPoseidonParams, N16384PPoseidonConfig, N16384Q0PoseidonConfig, N16384Q1PoseidonConfig,
+    N16384Q2PoseidonConfig, N16384Q3PoseidonConfig, N16384S0PoseidonConfig,
+    N16384S1PoseidonConfig,
 };
 
 fn config<F: PrimeField>() -> PoseidonConfig<F> {
@@ -33,43 +34,43 @@ fn config<F: PrimeField>() -> PoseidonConfig<F> {
     )
 }
 
-impl GetPoseidonParams<Fq0> for N4096Q0PoseidonConfig {
+impl GetPoseidonParams<Fq0> for N16384Q0PoseidonConfig {
     fn get_poseidon_config() -> PoseidonConfig<Fq0> {
         config()
     }
 }
 
-impl GetPoseidonParams<Fq1> for N4096Q1PoseidonConfig {
+impl GetPoseidonParams<Fq1> for N16384Q1PoseidonConfig {
     fn get_poseidon_config() -> PoseidonConfig<Fq1> {
         config()
     }
 }
 
-impl GetPoseidonParams<Fq2> for N4096Q2PoseidonConfig {
+impl GetPoseidonParams<Fq2> for N16384Q2PoseidonConfig {
     fn get_poseidon_config() -> PoseidonConfig<Fq2> {
         config()
     }
 }
 
-impl GetPoseidonParams<Fq3> for N4096Q3PoseidonConfig {
+impl GetPoseidonParams<Fq3> for N16384Q3PoseidonConfig {
     fn get_poseidon_config() -> PoseidonConfig<Fq3> {
         config()
     }
 }
 
-impl GetPoseidonParams<FqP> for N4096PPoseidonConfig {
+impl GetPoseidonParams<FqP> for N16384PPoseidonConfig {
     fn get_poseidon_config() -> PoseidonConfig<FqP> {
         config()
     }
 }
 
-impl GetPoseidonParams<FqS0> for N4096S0PoseidonConfig {
+impl GetPoseidonParams<FqS0> for N16384S0PoseidonConfig {
     fn get_poseidon_config() -> PoseidonConfig<FqS0> {
         config()
     }
 }
 
-impl GetPoseidonParams<FqS1> for N4096S1PoseidonConfig {
+impl GetPoseidonParams<FqS1> for N16384S1PoseidonConfig {
     fn get_poseidon_config() -> PoseidonConfig<FqS1> {
         config()
     }
@@ -88,8 +89,9 @@ mod tests {
 
     #[test]
     fn configs_have_expected_shape() {
-        assert_shape(&N4096Q0PoseidonConfig::get_poseidon_config());
-        assert_shape(&N4096Q1PoseidonConfig::get_poseidon_config());
-        assert_shape(&N4096Q2PoseidonConfig::get_poseidon_config());
+        assert_shape(&N16384Q0PoseidonConfig::get_poseidon_config());
+        assert_shape(&N16384Q1PoseidonConfig::get_poseidon_config());
+        assert_shape(&N16384Q2PoseidonConfig::get_poseidon_config());
+        assert_shape(&N16384Q3PoseidonConfig::get_poseidon_config());
     }
 }

@@ -9,19 +9,20 @@ use num_bigint::BigUint;
 use num_traits::{One, Zero};
 
 /// Ring degree for the smaller production-oriented candidate.
-pub const N4096_DEGREE: usize = 4096;
+pub const DEMO_DEGREE: usize = 4096;
 
 /// Threshold plaintext modulus, chosen as a power of two and at least N.
-pub const N4096_THRESHOLD_PLAINTEXT_MODULUS: u64 = 1 << 13;
+pub const DEMO_THRESHOLD_PLAINTEXT_MODULUS: u64 = 1 << 13;
 
 /// Native threshold-BFV RNS chain.
-pub const N4096_THRESHOLD_MODULI: [u64; 3] = [0x20004c001, 0x2000f4001, 0x200164001];
+pub const DEMO_THRESHOLD_MODULI: [u64; 4] =
+    [0x20004c001, 0x2000f4001, 0x200164001, 0x3fffe4001];
 
 /// Product of [`N4096_THRESHOLD_MODULI`].
-pub const N4096_THRESHOLD_MODULUS_PRODUCT: u128 = 634029627889566009658444496897;
+pub const DEMO_RECONSTRUCTION_MODULUS: &str =
+    "696898287454081973172991196020261297242113";
 
 /// Reconstruction modulus candidate, greater than sixteen times Q.
-pub const N4096_RECONSTRUCTION_MODULUS: u128 = 0x80000000000000000000064001;
 
 // ---------------------------------------------------------------------------
 // R7 extraction slack and tight quotient/rounding-witness decomposition
@@ -75,33 +76,33 @@ pub const R7_EXTRACTION_SLACK: u64 = 2;
 
 /// N=8192 R7 CRT-quotient decomposition (B', L'): capacity C_q ~ 2^116 covers
 /// Q/q_l (max quotient witness); ENF_q = B'^L' - 1 = 2^117 - 1.
-pub const N8192_R7_CRT_B: u128 = 1 << 13;
+pub const PROD_R7_CRT_B: u128 = 1 << 11;
 /// Limbs of the N=8192 CRT-quotient decomposition.
-pub const N8192_R7_CRT_L: usize = 9;
+pub const PROD_R7_CRT_L: usize = 17;
 /// N=8192 R7 decode-noise decomposition (B'', L''): capacity C_e = 2^149
 /// covers the Eq1 noise bound E_true ~ 2^145.6; ENF_e = 2^150 - 1 stays
 /// under Delta - E_true (headroom ~16x).
-pub const N8192_R7_DECODE_B: u128 = 1 << 10;
+pub const PROD_R7_DECODE_B: u128 = 1 << 11;
 /// Limbs of the N=8192 decode-noise decomposition.
-pub const N8192_R7_DECODE_L: usize = 15;
+pub const PROD_R7_DECODE_L: usize = 14;
 
 /// N=4096 R7 CRT-quotient decomposition (B', L'): capacity C_q = 2^67 covers
 /// Q/q_l ~ 2^66.3; ENF_q = 2^68 - 1.
-pub const N4096_R7_CRT_B: u128 = 1 << 17;
+pub const DEMO_R7_CRT_B: u128 = 1 << 17;
 /// Limbs of the N=4096 CRT-quotient decomposition.
-pub const N4096_R7_CRT_L: usize = 4;
+pub const DEMO_R7_CRT_L: usize = 6;
 /// N=4096 R7 decode-noise decomposition (B'', L''): capacity C_e = 2^83
 /// covers E_true ~ 2^74; ENF_e = 2^84 - 1 stays under Delta - E_true
 /// (headroom ~4x).
-pub const N4096_R7_DECODE_B: u128 = 1 << 12;
+pub const DEMO_R7_DECODE_B: u128 = 1 << 12;
 /// Limbs of the N=4096 decode-noise decomposition.
-pub const N4096_R7_DECODE_L: usize = 7;
+pub const DEMO_R7_DECODE_L: usize = 7;
 
 /// Plaintext modulus for individual BFV share transport.
-pub const N4096_SHARE_PLAINTEXT_MODULUS: u64 = 1 << 34;
+pub const DEMO_SHARE_PLAINTEXT_MODULUS: u64 = 1 << 34;
 
 /// NTT-friendly chain used by the individual BFV transport instance.
-pub const N4096_SHARE_ENCRYPTION_MODULI: [u64; 2] = [0x2000000001be0001, 0x2000000001960001];
+pub const DEMO_SHARE_ENCRYPTION_MODULI: [u64; 2] = [0x2000000001be0001, 0x2000000001960001];
 
 // ---------------------------------------------------------------------------
 // N=8192 candidate, matching the security of the Noir/UltraHonk `secure-8192`
@@ -129,18 +130,24 @@ pub const N4096_SHARE_ENCRYPTION_MODULI: [u64; 2] = [0x2000000001be0001, 0x20000
 // current lattice estimator before claiming 128-bit post-quantum security.
 // ---------------------------------------------------------------------------
 
-/// Ring degree for the production-matching candidate.
-pub const N8192_DEGREE: usize = 8192;
+/// Ring degree for the production parameter set (matches the fhe.rs lbfv
+/// multiplication example `trbfv_mul_bfv_share_binding`: d = 16384).
+pub const PROD_DEGREE: usize = 16384;
 
-/// Threshold plaintext modulus: the smallest power of two covering the Noir
-/// preset's 1_000_000.
-pub const N8192_THRESHOLD_PLAINTEXT_MODULUS: u64 = 1 << 20;
+/// Threshold plaintext modulus (power of two >= the ring degree, as the
+/// LatticeFold congruence requires at d = 16384; covers the lbfv example's
+/// plaintext space of 1000).
+pub const PROD_THRESHOLD_PLAINTEXT_MODULUS: u64 = 1 << 20;
 
-/// Native threshold-BFV RNS chain (58-bit primes, `q = 2097153 mod 2^22`).
-pub const N8192_THRESHOLD_MODULI: [u64; 3] = [
-    0x03fffffffea00001,
-    0x03fffffffc600001,
-    0x03fffffff8200001,
+/// Native threshold-BFV RNS chain (four 61-bit primes, `q = 2097153 mod
+/// 2^22`, subsuming NTT-friendliness for N = 16384 and the LatticeFold
+/// congruence with t = 2^20). Same size class as the lbfv multiplication
+/// example's 4 x 61-bit chain: log2 Q = 244.
+pub const PROD_THRESHOLD_MODULI: [u64; 4] = [
+    0x1fffffffffe00001,
+    0x1ffffffffe600001,
+    0x1fffffffef600001,
+    0x1fffffffed200001,
 ];
 
 /// Reconstruction modulus (177-bit, P = 5.0*Q).
@@ -159,16 +166,17 @@ pub const N8192_THRESHOLD_MODULI: [u64; 3] = [
 /// field model. The primitive 2N-th root of unity (the P-ring NTT constant
 /// in the stark-rings model) is `3^((P-1)/16384) mod P =
 /// 32970195846663976618806704620762070992180491843905132`.
-pub const N8192_RECONSTRUCTION_MODULUS: &str =
-    "119726214040421913813678353145170032429398733254295553";
+pub const PROD_RECONSTRUCTION_MODULUS: &str =
+    "1809251394333065553493296640760748560207343510400633813116524750146147188737";
 
 /// Plaintext modulus for individual BFV share transport: the largest
 /// threshold prime, mirroring the Noir preset's `t_share = max(q_l)` rule.
-pub const N8192_SHARE_PLAINTEXT_MODULUS: u64 = N8192_THRESHOLD_MODULI[0];
+pub const PROD_SHARE_PLAINTEXT_MODULUS: u64 = PROD_THRESHOLD_MODULI[0];
 
-/// NTT-friendly 60-bit chain used by the individual BFV transport instance
-/// (off-chain data plane only, so no LatticeFold congruence is required).
-pub const N8192_SHARE_ENCRYPTION_MODULI: [u64; 2] = [0x800000000004001, 0x800000000044001];
+/// NTT-friendly 62-bit chain used by the individual BFV transport instance
+/// (same primes as the digit-form R3 chain; two-adicity 17 subsumes
+/// NTT-friendliness for N = 16384).
+pub const PROD_SHARE_ENCRYPTION_MODULI: [u64; 2] = R3_MODULI;
 
 // ---------------------------------------------------------------------------
 // R3 share-transport chain (digit-form share encryption).
@@ -196,8 +204,8 @@ pub fn validate_r3_chain() -> bool {
     let t = R3_PLAINTEXT_MODULUS;
     R3_MODULI.iter().copied().all(|modulus| {
         probable_prime_u64(modulus)
-            && modulus % (2 * N8192_DEGREE as u64) == 1
-            && modulus % (2 * N4096_DEGREE as u64) == 1
+            && modulus % (2 * PROD_DEGREE as u64) == 1
+            && modulus % (2 * DEMO_DEGREE as u64) == 1
             && modulus % (4 * t) == 1 + 2 * t
             && modulus > 2 * t
     }) && R3_MODULI[0] != R3_MODULI[1]
@@ -224,7 +232,7 @@ fn enforced_bound(b: u128, l: usize) -> BigUint {
 #[must_use]
 pub fn r7_margin_holds(
     p: &BigUint,
-    moduli: [u64; 3],
+    moduli: [u64; 4],
     plaintext: u64,
     e_true: &BigUint,
     crt_b: u128,
@@ -276,43 +284,55 @@ pub fn r7_margin_holds(
     true
 }
 
-/// The N=8192 decode-noise bound E_true under the Noir preset's Eq1
-/// accounting (n = 10, z = t, lambda = 50, B = 20, B_chi = 1):
-/// E_true = B_C + n * B_sm with B_C = t * B_fresh.
-fn n8192_decode_noise_bound() -> (BigUint, BigUint) {
-    let n = BigUint::from(10u64);
-    let d = BigUint::from(N8192_DEGREE);
+/// The production decode-noise bound E_true under the Noir preset's Eq1
+/// accounting (n = 51, z = t, lambda = 50, B = 20, B_chi = 1):
+/// E_true = B_C + n * B_sm with B_C = t * B_fresh (~2^151.7 < Delta ~ 2^224).
+fn prod_decode_noise_bound() -> (BigUint, BigUint) {
+    // H = 51 honest dealers (the N=100 committee) is the binding case.
+    let n = BigUint::from(51u64);
+    let d = BigUint::from(PROD_DEGREE);
     let b = BigUint::from(20u64);
     let two_pow_lambda = BigUint::from(1u64) << 50u32;
     let benc_min = 2u64 * &d * &n * &b * &two_pow_lambda;
     let b_fresh = &benc_min + 2u64 * &d * &b * &n;
-    let b_c = BigUint::from(N8192_THRESHOLD_PLAINTEXT_MODULUS) * &b_fresh;
+    let b_c = BigUint::from(PROD_THRESHOLD_PLAINTEXT_MODULUS) * &b_fresh;
     let b_sm_min = &b_c * &two_pow_lambda;
     let e_true = &b_c + n * b_sm_min;
     (e_true, b_c)
 }
 
-/// Validate the N=8192 candidate and its individual share-transport chain
-/// against the Noir preset's security accounting.
+/// Validate the production set (d = 16384, 4 x 61-bit) and its individual
+/// share-transport chain against the Noir preset's security accounting and
+/// the lbfv multiplication example's correctness requirement.
 #[must_use]
-pub fn validate_n8192() -> bool {
-    let two_n = 2 * N8192_DEGREE as u64;
-    let four_t = 4 * N8192_THRESHOLD_PLAINTEXT_MODULUS;
-    let lf_residue = 1 + 2 * N8192_THRESHOLD_PLAINTEXT_MODULUS;
+pub fn validate_prod() -> bool {
+    let two_n = 2 * PROD_DEGREE as u64;
+    let four_t = 4 * PROD_THRESHOLD_PLAINTEXT_MODULUS;
+    let lf_residue = 1 + 2 * PROD_THRESHOLD_PLAINTEXT_MODULUS;
 
     let mut product = BigUint::from(1u64);
-    for (index, modulus) in N8192_THRESHOLD_MODULI.iter().copied().enumerate() {
+    for (index, modulus) in PROD_THRESHOLD_MODULI.iter().copied().enumerate() {
         if !probable_prime_u64(modulus)
             || modulus % two_n != 1
             || modulus % four_t != lf_residue
-            || N8192_THRESHOLD_MODULI[..index].contains(&modulus)
+            || PROD_THRESHOLD_MODULI[..index].contains(&modulus)
         {
             return false;
         }
         product *= modulus;
     }
+    // Exact Delta (every q_l = 1 mod t).
+    if &product % PROD_THRESHOLD_PLAINTEXT_MODULUS != BigUint::one() {
+        return false;
+    }
+    // lbfv multiplication correctness (the fhe.rs example's accounting):
+    // log2(B_C after mult) ~ 187.5 < log2(Delta) = 224.
+    let delta = &product / PROD_THRESHOLD_PLAINTEXT_MODULUS;
+    if delta.bits() < 224 {
+        return false;
+    }
 
-    let p = BigUint::parse_bytes(N8192_RECONSTRUCTION_MODULUS.as_bytes(), 10)
+    let p = BigUint::parse_bytes(PROD_RECONSTRUCTION_MODULUS.as_bytes(), 10)
         .expect("P constant must be decimal");
     // Primality, NTT-friendliness and the LatticeFold congruence.
     if &p % two_n != BigUint::one()
@@ -326,22 +346,23 @@ pub fn validate_n8192() -> bool {
     if &p - BigUint::one() != &safe_m << 21 || !probable_prime_big(&safe_m) {
         return false;
     }
-    // Fp192 model capacity (three 64-bit Montgomery limbs).
-    if p.bits() > 192 {
+    // Fp256 model capacity (four 64-bit Montgomery limbs).
+    if p.bits() > 256 {
         return false;
     }
 
     // Eq4 security cap of the Noir parameter search: log2(q) <= log2(B) +
-    // (d-75)/37.5 with B = 20, d = 8192  =>  ~220.8 bits.
+    // (d-75)/37.5 with B = 20, d = 16384  =>  ~439.2 bits (Q = 244).
     let log2_q = product.bits() as f64;
-    if log2_q > 20f64.log2() + (N8192_DEGREE as f64 - 75.0) / 37.5 {
+    if log2_q > 20f64.log2() + (PROD_DEGREE as f64 - 75.0) / 37.5 {
         return false;
     }
 
-    // Eq1 correctness margin with the Noir preset's accounting (n = 10,
-    // z = t, lambda = 50, B = 20, B_chi = 1): 2*(B_C + n*B_sm) < Delta.
-    let (e_true, _) = n8192_decode_noise_bound();
-    let delta = &product / N8192_THRESHOLD_PLAINTEXT_MODULUS;
+    // Eq1 correctness margin with the Noir preset's accounting (n = 51,
+    // z = t, lambda = 50, B = 20, B_chi = 1): 2*(B_C + n*B_sm) < Delta,
+    // which holds with ~72 bits of headroom at log2(Delta) = 224.
+    let (e_true, _) = prod_decode_noise_bound();
+    let delta = &product / PROD_THRESHOLD_PLAINTEXT_MODULUS;
     if &e_true << 1 >= delta {
         return false;
     }
@@ -351,25 +372,25 @@ pub fn validate_n8192() -> bool {
     // P > 4Q check).
     if !r7_margin_holds(
         &p,
-        N8192_THRESHOLD_MODULI,
-        N8192_THRESHOLD_PLAINTEXT_MODULUS,
+        PROD_THRESHOLD_MODULI,
+        PROD_THRESHOLD_PLAINTEXT_MODULUS,
         &e_true,
-        N8192_R7_CRT_B,
-        N8192_R7_CRT_L,
-        N8192_R7_DECODE_B,
-        N8192_R7_DECODE_L,
+        PROD_R7_CRT_B,
+        PROD_R7_CRT_L,
+        PROD_R7_DECODE_B,
+        PROD_R7_DECODE_L,
     ) {
         return false;
     }
 
-    N8192_SHARE_PLAINTEXT_MODULUS > 0
-        && N8192_SHARE_ENCRYPTION_MODULI
+    PROD_SHARE_PLAINTEXT_MODULUS > 0
+        && PROD_SHARE_ENCRYPTION_MODULI
             .iter()
             .copied()
             .all(|modulus| {
                 probable_prime_u64(modulus)
                     && modulus % two_n == 1
-                    && modulus > N8192_SHARE_PLAINTEXT_MODULUS
+                    && modulus > PROD_SHARE_PLAINTEXT_MODULUS
             })
 }
 
@@ -478,89 +499,94 @@ fn probable_prime_big(n: &BigUint) -> bool {
 /// this parameter set has no decryption-correctness margin under that
 /// accounting; the fhe.rs accounting (which drops the t factor from B_C)
 /// is the operative one here.
-fn n4096_decode_noise_bound() -> BigUint {
+fn demo_decode_noise_bound() -> BigUint {
     let variance = 10u64;
     let dealers = BigUint::from(10u64);
-    let degree = BigUint::from(N4096_DEGREE);
+    let degree = BigUint::from(DEMO_DEGREE);
     let b_e = BigUint::from(2 * variance);
     let b_fresh = &degree * &dealers * &b_e + &degree * &b_e * &dealers;
-    let b_c = &b_fresh
-        + N4096_THRESHOLD_MODULUS_PRODUCT % u128::from(N4096_THRESHOLD_PLAINTEXT_MODULUS);
+    // Every demo q_l = 1 mod t, so Q mod t = 1.
+    let b_c = &b_fresh + BigUint::one();
     let two_pow_lambda = BigUint::from(1u64) << 50u32;
     let b_sm = &b_c * &two_pow_lambda;
     b_c + dealers * b_sm
 }
 
-/// Validate the N=4096 candidate and its individual share-transport chain.
+/// Validate the demo set (d = 4096, 4 x 34-bit, benchmark-only: no
+/// decryption-correctness margin exists under the production Eq1 accounting
+/// at this degree, so it is not a deployment candidate) and its individual
+/// share-transport chain.
 #[must_use]
-pub fn validate_n4096() -> bool {
-    let two_n = 2 * N4096_DEGREE as u64;
-    let four_t = 4 * N4096_THRESHOLD_PLAINTEXT_MODULUS;
-    let lf_residue = 1 + 2 * N4096_THRESHOLD_PLAINTEXT_MODULUS;
+pub fn validate_demo() -> bool {
+    let two_n = 2 * DEMO_DEGREE as u64;
+    let four_t = 4 * DEMO_THRESHOLD_PLAINTEXT_MODULUS;
+    let lf_residue = 1 + 2 * DEMO_THRESHOLD_PLAINTEXT_MODULUS;
 
-    let mut product = 1u128;
-    for (index, modulus) in N4096_THRESHOLD_MODULI.iter().copied().enumerate() {
+    let mut product = BigUint::one();
+    for (index, modulus) in DEMO_THRESHOLD_MODULI.iter().copied().enumerate() {
         if !probable_prime_u64(modulus)
             || modulus % two_n != 1
             || modulus % four_t != lf_residue
-            || N4096_THRESHOLD_MODULI[..index].contains(&modulus)
+            || DEMO_THRESHOLD_MODULI[..index].contains(&modulus)
         {
             return false;
         }
-        product *= modulus as u128;
-    }
-    if product != N4096_THRESHOLD_MODULUS_PRODUCT {
-        return false;
+        product *= modulus;
     }
 
-    let p = BigUint::from(N4096_RECONSTRUCTION_MODULUS);
-    if N4096_RECONSTRUCTION_MODULUS % two_n as u128 != 1
-        || N4096_RECONSTRUCTION_MODULUS % four_t as u128 != lf_residue as u128
+    let p = BigUint::parse_bytes(DEMO_RECONSTRUCTION_MODULUS.as_bytes(), 10)
+        .expect("P constant must be decimal");
+    if &p % two_n != BigUint::one()
+        || &p % four_t != BigUint::from(lf_residue)
         || !probable_prime_big(&p)
     {
+        return false;
+    }
+    // Fp192 model capacity (three 64-bit Montgomery limbs).
+    if p.bits() > 192 {
         return false;
     }
 
     // §9.3 no-wraparound margin for the R7 P track at the derived slack,
     // over the tight quotient/decode decompositions (replaces the bare
     // P > 4Q check).
-    let e_true = n4096_decode_noise_bound();
+    let e_true = demo_decode_noise_bound();
     if !r7_margin_holds(
         &p,
-        N4096_THRESHOLD_MODULI,
-        N4096_THRESHOLD_PLAINTEXT_MODULUS,
+        DEMO_THRESHOLD_MODULI,
+        DEMO_THRESHOLD_PLAINTEXT_MODULUS,
         &e_true,
-        N4096_R7_CRT_B,
-        N4096_R7_CRT_L,
-        N4096_R7_DECODE_B,
-        N4096_R7_DECODE_L,
+        DEMO_R7_CRT_B,
+        DEMO_R7_CRT_L,
+        DEMO_R7_DECODE_B,
+        DEMO_R7_DECODE_L,
     ) {
         return false;
     }
 
-    N4096_SHARE_PLAINTEXT_MODULUS > N4096_THRESHOLD_MODULI.iter().copied().max().unwrap_or(0)
-        && N4096_SHARE_ENCRYPTION_MODULI
+    DEMO_SHARE_PLAINTEXT_MODULUS > DEMO_THRESHOLD_MODULI.iter().copied().max().unwrap_or(0)
+        && DEMO_SHARE_ENCRYPTION_MODULI
             .iter()
             .copied()
             .all(|modulus| probable_prime_u64(modulus) && modulus % two_n == 1)
 }
 
 /// A validated parameter set for the native VDKG path: one threshold-BFV RNS
-/// chain (three channels), the plaintext modulus, and the individual BFV
+/// chain (four channels), the plaintext modulus, and the individual BFV
 /// share-transport chain.
 pub trait VdkgParams: 'static {
     /// Ring degree N.
     const DEGREE: usize;
     /// Threshold plaintext modulus t.
     const THRESHOLD_PLAINTEXT: u64;
-    /// The three threshold-BFV RNS channel moduli.
-    const THRESHOLD_MODULI: [u64; 3];
+    /// The four threshold-BFV RNS channel moduli.
+    const THRESHOLD_MODULI: [u64; 4];
     /// Plaintext modulus of the individual BFV share-transport instance.
     const SHARE_PLAINTEXT: u64;
     /// Ciphertext moduli of the individual BFV share-transport instance.
     const SHARE_MODULI: [u64; 2];
 
-    /// Product Q of the three channel moduli.
+    /// Product Q of the four channel moduli.
     fn threshold_product() -> BigUint {
         Self::THRESHOLD_MODULI
             .iter()
@@ -575,125 +601,135 @@ pub trait VdkgParams: 'static {
     }
 }
 
-/// The N=4096 engineering candidate.
-pub struct N4096Params;
+/// The demo parameter set (d = 4096, 4 x 34-bit): benchmark-only — above
+/// 128 bits of RLWE security but no decryption-correctness margin under the
+/// production Eq1 accounting at this degree, so it is not a deployment
+/// candidate. It exists for fast end-to-end runs and CI.
+pub struct DemoParams;
 
-impl VdkgParams for N4096Params {
-    const DEGREE: usize = N4096_DEGREE;
-    const THRESHOLD_PLAINTEXT: u64 = N4096_THRESHOLD_PLAINTEXT_MODULUS;
-    const THRESHOLD_MODULI: [u64; 3] = N4096_THRESHOLD_MODULI;
-    const SHARE_PLAINTEXT: u64 = N4096_SHARE_PLAINTEXT_MODULUS;
-    const SHARE_MODULI: [u64; 2] = N4096_SHARE_ENCRYPTION_MODULI;
+impl VdkgParams for DemoParams {
+    const DEGREE: usize = DEMO_DEGREE;
+    const THRESHOLD_PLAINTEXT: u64 = DEMO_THRESHOLD_PLAINTEXT_MODULUS;
+    const THRESHOLD_MODULI: [u64; 4] = DEMO_THRESHOLD_MODULI;
+    const SHARE_PLAINTEXT: u64 = DEMO_SHARE_PLAINTEXT_MODULUS;
+    const SHARE_MODULI: [u64; 2] = DEMO_SHARE_ENCRYPTION_MODULI;
 }
 
-/// The N=8192 candidate matching the Noir `secure-8192` security.
-pub struct N8192Params;
+/// The production parameter set (d = 16384, 4 x 61-bit, t = 2^20): matches
+/// the fhe.rs lbfv multiplication example's size class (log2 Q = 244) with
+/// LatticeFold-congruent primes; RLWE security estimator-expected >= 160
+/// bits post-quantum (larger degree than the measured d = 8192 / Q = 174
+/// point, which gave 159-161 bits); Eq1 correctness margin ~72 bits at
+/// H = 51 parties and ~75 bits at n = 20; lbfv-mul margin ~36.5 bits.
+pub struct ProdParams;
 
-impl VdkgParams for N8192Params {
-    const DEGREE: usize = N8192_DEGREE;
-    const THRESHOLD_PLAINTEXT: u64 = N8192_THRESHOLD_PLAINTEXT_MODULUS;
-    const THRESHOLD_MODULI: [u64; 3] = N8192_THRESHOLD_MODULI;
-    const SHARE_PLAINTEXT: u64 = N8192_SHARE_PLAINTEXT_MODULUS;
-    const SHARE_MODULI: [u64; 2] = N8192_SHARE_ENCRYPTION_MODULI;
+impl VdkgParams for ProdParams {
+    const DEGREE: usize = PROD_DEGREE;
+    const THRESHOLD_PLAINTEXT: u64 = PROD_THRESHOLD_PLAINTEXT_MODULUS;
+    const THRESHOLD_MODULI: [u64; 4] = PROD_THRESHOLD_MODULI;
+    const SHARE_PLAINTEXT: u64 = PROD_SHARE_PLAINTEXT_MODULUS;
+    const SHARE_MODULI: [u64; 2] = PROD_SHARE_ENCRYPTION_MODULI;
 }
 
 /// The per-channel NTT roots (psi, omega = psi^2 mod q_l) for the wrapper
 /// circuits, mirroring the stark-rings model constants.
 pub fn ntt_roots<P: VdkgParams>(channel: usize) -> (u64, u64) {
-    let (psi, modulus) = if P::DEGREE == N8192_DEGREE {
-        ([115622940536082438u64, 55065086075221574, 12885523556474316][channel], P::THRESHOLD_MODULI[channel])
+    let (psi, modulus) = if P::DEGREE == PROD_DEGREE {
+        (
+            [875053553084042915u64, 1640367222369352504, 992394967967060181, 1918018633191661828]
+                [channel],
+            P::THRESHOLD_MODULI[channel],
+        )
     } else {
-        ([8003223405u64, 520027819, 8455812194][channel], P::THRESHOLD_MODULI[channel])
+        (
+            [8003223405u64, 520027819, 8455812194, 16434184190][channel],
+            P::THRESHOLD_MODULI[channel],
+        )
     };
     let omega = (psi as u128 * psi as u128 % modulus as u128) as u64;
     (psi, omega)
 }
 
 #[cfg(test)]
-mod tests {    use super::*;
+mod tests {
+    use super::*;
 
     #[test]
-    fn n4096_candidate_is_valid() {
-        assert!(validate_n4096());
+    fn demo_candidate_is_valid() {
+        assert!(validate_demo());
     }
 
     #[test]
-    fn n4096_product_and_margin_are_explicit() {
-        let product = N4096_THRESHOLD_MODULI
-            .iter()
-            .fold(1u128, |acc, &modulus| acc * modulus as u128);
-        assert_eq!(product, N4096_THRESHOLD_MODULUS_PRODUCT);
-        assert!(N4096_RECONSTRUCTION_MODULUS > 4 * product);
+    fn prod_candidate_is_valid() {
+        assert!(validate_prod());
     }
 
     #[test]
-    fn n8192_candidate_matches_noir_secure_preset_security() {
-        assert!(validate_n8192());
-        let log2_q = N8192_THRESHOLD_MODULI
+    fn prod_chain_matches_lbfv_example_size_class() {
+        let log2_q = PROD_THRESHOLD_MODULI
             .iter()
             .fold(BigUint::from(1u64), |acc, &m| acc * m)
             .bits();
-        // Same shape as the Noir secure-8192 preset: 3 x 58-bit, log2 Q ~ 174.
-        assert_eq!(log2_q, 174);
+        // The fhe.rs lbfv multiplication example's size class: 4 x 61-bit.
+        assert_eq!(log2_q, 244);
     }
 
     #[test]
-    fn n8192_reconstruction_prime_properties() {
-        let p = BigUint::parse_bytes(N8192_RECONSTRUCTION_MODULUS.as_bytes(), 10)
+    fn prod_reconstruction_prime_properties() {
+        let p = BigUint::parse_bytes(PROD_RECONSTRUCTION_MODULUS.as_bytes(), 10)
             .expect("P constant must be decimal");
-        let product: BigUint = N8192_THRESHOLD_MODULI
+        let product: BigUint = PROD_THRESHOLD_MODULI
             .iter()
             .map(|&m| BigUint::from(m))
             .product();
 
-        // Margin over Q at the derived slack S = 2: P > 2*S*Q with a full
-        // factor Q to spare (P = 5.0*Q), and P fits the Fp192 model.
+        // P > 4Q at the derived slack S = 2, and P fits the Fp256 model.
         assert!(p > R7_EXTRACTION_SLACK * 2u64 * &product);
-        assert!(p.bits() <= 192);
+        assert!(p.bits() <= 256);
 
         // Primality, congruences, safe form.
         assert!(probable_prime_big(&p));
         assert_eq!(&p % (1u64 << 22), BigUint::from(2097153u64));
-        assert_eq!(&p % (2 * N8192_DEGREE as u64), BigUint::one());
+        assert_eq!(&p % (2 * PROD_DEGREE as u64), BigUint::one());
         assert_eq!(
-            &p % (4 * N8192_THRESHOLD_PLAINTEXT_MODULUS),
-            BigUint::from(1 + 2 * N8192_THRESHOLD_PLAINTEXT_MODULUS)
+            &p % (4 * PROD_THRESHOLD_PLAINTEXT_MODULUS),
+            BigUint::from(1 + 2 * PROD_THRESHOLD_PLAINTEXT_MODULUS)
         );
         let safe_m = (&p - BigUint::one()) >> 21;
         assert_eq!(&p - BigUint::one(), &safe_m << 21);
         assert!(probable_prime_big(&safe_m), "safe-form cofactor must be prime");
 
         // Certified primitive root 3 and the P-ring NTT root (the constant
-        // placed in the stark-rings n8192 model): psi = 3^((P-1)/2^14) must
+        // placed in the stark-rings n16384 model): psi = 3^((P-1)/2^15) must
         // be a primitive 2N-th root of unity, i.e. psi^N = -1 mod P.
         let exponent = (&p - BigUint::one()) / 2u64;
         assert_eq!(BigUint::from(3u64).modpow(&exponent, &p), &p - BigUint::one());
-        let psi = BigUint::from(3u64).modpow(&((&p - BigUint::one()) / 16384u64), &p);
+        let psi = BigUint::from(3u64).modpow(&((&p - BigUint::one()) / 32768u64), &p);
         assert_eq!(
             psi,
             BigUint::parse_bytes(
-                b"32970195846663976618806704620762070992180491843905132",
+                b"800740270527046191467754138274621887446681349755193356465943639037957688602",
                 10
             )
             .unwrap()
         );
-        assert_eq!(psi.modpow(&8192u64.into(), &p), &p - BigUint::one());
-        assert_eq!(psi.modpow(&16384u64.into(), &p), BigUint::one());
+        assert_eq!(psi.modpow(&16384u64.into(), &p), &p - BigUint::one());
+        assert_eq!(psi.modpow(&32768u64.into(), &p), BigUint::one());
     }
 
     #[test]
-    fn n8192_margin_holds_exactly() {
-        let p = BigUint::parse_bytes(N8192_RECONSTRUCTION_MODULUS.as_bytes(), 10).unwrap();
-        let (e_true, _) = n8192_decode_noise_bound();
+    fn prod_margin_holds_exactly() {
+        let p = BigUint::parse_bytes(PROD_RECONSTRUCTION_MODULUS.as_bytes(), 10).unwrap();
+        let (e_true, _) = prod_decode_noise_bound();
         assert!(r7_margin_holds(
             &p,
-            N8192_THRESHOLD_MODULI,
-            N8192_THRESHOLD_PLAINTEXT_MODULUS,
+            PROD_THRESHOLD_MODULI,
+            PROD_THRESHOLD_PLAINTEXT_MODULUS,
             &e_true,
-            N8192_R7_CRT_B,
-            N8192_R7_CRT_L,
-            N8192_R7_DECODE_B,
-            N8192_R7_DECODE_L,
+            PROD_R7_CRT_B,
+            PROD_R7_CRT_L,
+            PROD_R7_DECODE_B,
+            PROD_R7_DECODE_L,
         ));
     }
 

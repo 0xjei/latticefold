@@ -1,7 +1,7 @@
 //! Full native VDKG flow: P1 DKG (R1 + R2 + R3 transport + folded R4) ->
 //! P2 threshold public-key aggregation (R5) -> P3 user encryption (Ruser) ->
 //! P4 threshold decryption (folded R6 + interpolation + P-track R7 CRT/decode),
-//! over the native q0/q1/q2 RNS channels and the reconstruction prime P.
+//! over the native q0/q1/q2/q3 RNS channels and the reconstruction prime P.
 //! The user message is encrypted under the aggregated threshold key and
 //! recovered by the committee, matching the coordination-trilemma flow with
 //! native folding in place of recursive proof aggregation (the C5/C7 ZK
@@ -10,11 +10,11 @@
 //! Run with Rust 1.91.1 and the opt-in feature:
 //!   cargo +1.91.1 run --release --example dkg_fhe_full_flow --features fhe-bridge
 //!   cargo +1.91.1 run --release --example dkg_fhe_full_flow --features fhe-bridge \
-//!     -- --params n8192 --n 3 --h 3 --t 2 --recipient 2
+//!     -- --params prod --n 3 --h 3 --t 2 --recipient 2
 //!
-//! `--params n4096` (default) selects the N=4096 engineering candidate;
-//! `--params n8192` selects the N=8192 parameter set matching the Noir
-//! `secure-8192` security (`t = 2^20`, 3x58-bit channels, 176-bit P).
+//! `--params demo` (default) selects the d=4096 engineering candidate (4 x
+//! 34-bit channels); `--params prod` selects the d=16384 production parameter
+//! set (`t = 2^20`, 4 x 61-bit channels, 251-bit P).
 //! The transported recipient must be one of the T reconstructing parties
 //! (`--recipient <= --t`). Pass `-- --help` for the full option list.
 
@@ -22,11 +22,11 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use latticefold::{
         fhe_bridge::CommitteeConfig,
-        vdkg_params::{VdkgParams, N4096Params, N8192Params},
+        vdkg_params::{DemoParams, ProdParams, VdkgParams},
     };
 
     let args: Vec<String> = std::env::args().collect();
-    let mut params = "n4096".to_string();
+    let mut params = "demo".to_string();
     let mut filtered: Vec<String> = Vec::with_capacity(args.len());
     let mut index = 0;
     while index < args.len() {
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "--session" => config.session_id = value.parse()?,
                 "--help" => {
                     println!(
-                        "dkg_fhe_full_flow [--params n4096|n8192] [--n N] [--h H] [--t T] \
+                        "dkg_fhe_full_flow [--params demo|prod] [--n N] [--h H] [--t T] \
                          [--recipient ID] [--session ID]"
                     );
                     return Ok(());
@@ -81,21 +81,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let start = std::time::Instant::now();
     let (recovered, message, degree) = match params.as_str() {
-        "n4096" => {
-            let message = (0..N4096Params::DEGREE)
-                .map(|c| (7 + 31 * c as u64) % N4096Params::THRESHOLD_PLAINTEXT)
+        "demo" => {
+            let message = (0..DemoParams::DEGREE)
+                .map(|c| (7 + 31 * c as u64) % DemoParams::THRESHOLD_PLAINTEXT)
                 .collect::<Vec<_>>();
             let recovered = latticefold::vdkg_flow::run_full_flow(&config, &message)?;
-            (recovered, message, "N=4096")
+            (recovered, message, "d=4096 demo")
         }
-        "n8192" => {
-            let message = (0..N8192Params::DEGREE)
-                .map(|c| (7 + 31 * c as u64) % N8192Params::THRESHOLD_PLAINTEXT)
+        "prod" => {
+            let message = (0..ProdParams::DEGREE)
+                .map(|c| (7 + 31 * c as u64) % ProdParams::THRESHOLD_PLAINTEXT)
                 .collect::<Vec<_>>();
-            let recovered = latticefold::vdkg_flow::run_full_flow_n8192(&config, &message)?;
-            (recovered, message, "N=8192")
+            let recovered = latticefold::vdkg_flow::run_full_flow_prod(&config, &message)?;
+            (recovered, message, "d=16384 prod")
         }
-        other => return Err(format!("unknown --params '{other}' (want n4096|n8192)").into()),
+        other => return Err(format!("unknown --params '{other}' (want demo|prod)").into()),
     };
     assert_eq!(recovered, message, "decrypted plaintext mismatch");
 

@@ -23,10 +23,10 @@
 use std::{error::Error, sync::Arc};
 
 use cyclotomic_rings::rings::{
+    N16384S0ChallengeSet, N16384S0Field, N16384S0RingNTT, N16384S0RingPoly,
+    N16384S1ChallengeSet, N16384S1Field, N16384S1RingNTT, N16384S1RingPoly,
     N4096S0ChallengeSet, N4096S0Field, N4096S0RingNTT, N4096S0RingPoly, N4096S1ChallengeSet,
-    N4096S1Field, N4096S1RingNTT, N4096S1RingPoly, N8192S0ChallengeSet, N8192S0Field,
-    N8192S0RingNTT, N8192S0RingPoly, N8192S1ChallengeSet, N8192S1Field, N8192S1RingNTT,
-    N8192S1RingPoly,
+    N4096S1Field, N4096S1RingNTT, N4096S1RingPoly,
 };
 use fhe::bfv::{self, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe_math::rq::{Poly, PowerBasis};
@@ -380,12 +380,12 @@ macro_rules! define_r3_track {
 }
 
 define_r3_track!(
-    n8192_s0, N8192S0RingNTT, N8192S0RingPoly, N8192S0Field, N8192S0ChallengeSet,
-    R3_MODULI[0], 8192
+    n16384_s0, N16384S0RingNTT, N16384S0RingPoly, N16384S0Field, N16384S0ChallengeSet,
+    R3_MODULI[0], 16384
 );
 define_r3_track!(
-    n8192_s1, N8192S1RingNTT, N8192S1RingPoly, N8192S1Field, N8192S1ChallengeSet,
-    R3_MODULI[1], 8192
+    n16384_s1, N16384S1RingNTT, N16384S1RingPoly, N16384S1Field, N16384S1ChallengeSet,
+    R3_MODULI[1], 16384
 );
 define_r3_track!(
     n4096_s0, N4096S0RingNTT, N4096S0RingPoly, N4096S0Field, N4096S0ChallengeSet,

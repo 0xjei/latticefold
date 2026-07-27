@@ -221,6 +221,10 @@ name = "dkg_params"
 path = "examples/interfold/ring/dkg_params.rs"
 
 [[example]]
+name = "dkg_params_prod"
+path = "examples/interfold/ring/dkg_params_prod.rs"
+
+[[example]]
 name = "dkg_ring_model"
 path = "examples/interfold/ring/dkg_ring_model.rs"
 

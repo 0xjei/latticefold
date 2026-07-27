@@ -1,22 +1,22 @@
-//! Validate and print the N=4096 native VDKG parameter candidate.
+//! Validate and print the demo (d=4096) native VDKG parameter candidate.
 //!
 //! Run with:
 //!   cargo run --release --example dkg_n4096_params
 
 use latticefold::vdkg_params::{
-    validate_n4096, N4096_DEGREE, N4096_RECONSTRUCTION_MODULUS, N4096_SHARE_ENCRYPTION_MODULI,
-    N4096_SHARE_PLAINTEXT_MODULUS, N4096_THRESHOLD_MODULI, N4096_THRESHOLD_MODULUS_PRODUCT,
-    N4096_THRESHOLD_PLAINTEXT_MODULUS,
+    validate_demo, DemoParams, VdkgParams, DEMO_DEGREE, DEMO_RECONSTRUCTION_MODULUS,
+    DEMO_SHARE_ENCRYPTION_MODULI, DEMO_SHARE_PLAINTEXT_MODULUS, DEMO_THRESHOLD_MODULI,
+    DEMO_THRESHOLD_PLAINTEXT_MODULUS,
 };
 
 fn main() {
-    assert!(validate_n4096(), "N=4096 parameter validation failed");
-    println!("N = {N4096_DEGREE}");
-    println!("threshold plaintext modulus = {N4096_THRESHOLD_PLAINTEXT_MODULUS}");
-    println!("threshold moduli = {N4096_THRESHOLD_MODULI:#x?}");
-    println!("Q = {N4096_THRESHOLD_MODULUS_PRODUCT}");
-    println!("P = {N4096_RECONSTRUCTION_MODULUS:#x}");
-    println!("share plaintext modulus = {N4096_SHARE_PLAINTEXT_MODULUS}");
-    println!("share-encryption moduli = {N4096_SHARE_ENCRYPTION_MODULI:#x?}");
-    println!("N=4096 native parameter candidate: validated");
+    assert!(validate_demo(), "demo parameter validation failed");
+    println!("N = {DEMO_DEGREE}");
+    println!("threshold plaintext modulus = {DEMO_THRESHOLD_PLAINTEXT_MODULUS}");
+    println!("threshold moduli = {DEMO_THRESHOLD_MODULI:#x?}");
+    println!("Q = {}", DemoParams::threshold_product());
+    println!("P = {DEMO_RECONSTRUCTION_MODULUS}");
+    println!("share plaintext modulus = {DEMO_SHARE_PLAINTEXT_MODULUS}");
+    println!("share-encryption moduli = {DEMO_SHARE_ENCRYPTION_MODULI:#x?}");
+    println!("d=4096 demo native parameter candidate: validated");
 }

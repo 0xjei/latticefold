@@ -1,7 +1,7 @@
-//! Full-committee multi-channel integration: H dealers, threshold T, one Z_Q
-//! sharing per dealer projected to the q0/q1/q2 RNS channels, BFV transport,
-//! per-channel folded R4 accumulators, and CRT recombination. The committee
-//! sizes N/H/T are configurable.
+//! Full-committee multi-channel integration: H dealers, threshold T, one
+//! short secret per dealer shared natively on the q0/q1/q2/q3 RNS channels
+//! (CRT-consistent by construction), BFV transport, and per-channel folded R4
+//! accumulators. The committee sizes N/H/T are configurable.
 //!
 //! Run with Rust 1.91.1 and the opt-in feature:
 //!   cargo +1.91.1 run --release --example dkg_fhe_multichannel_r4 --features fhe-bridge
@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     latticefold::fhe_bridge::round_trip_multichannel_committee_r4(&config)?;
     println!(
         "N={}/H={}/T={} committee (recipient {}, session {}), \
-         q0/q1/q2 R2 -> BFV -> folded R4 + CRT recombination: validated",
+         q0..q3 R2 -> BFV -> folded R4 (channel-native sharings): validated",
         config.committee_n,
         config.honest_h,
         config.threshold_t,

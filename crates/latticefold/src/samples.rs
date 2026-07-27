@@ -8,7 +8,7 @@
 //! - **Smudging noise**: `TRBFV::generate_smudging_error_with_participant_count`
 //!   — sampled with the correct Urban–Rambaud bound from
 //!   `SmudgingBoundCalculator` (wide: ~2^122 at lambda=50 with one summed
-//!   ciphertext; it does NOT fit a single 58-bit channel, which is why the
+//!   ciphertext; it does NOT fit a single channel, which is why the
 //!   commitment side uses base-B limbs, per plan §9.2).
 
 use std::{error::Error, sync::Arc};
@@ -135,7 +135,7 @@ pub fn recompose_limbs(limbs: &[i64]) -> BigInt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vdkg_params::N8192Params;
+    use crate::vdkg_params::ProdParams;
 
     #[test]
     fn limbs_round_trip() {
@@ -154,14 +154,14 @@ mod tests {
 
     #[test]
     fn dealer_samples_have_expected_shapes() {
-        let samples = sample_dealer::<N8192Params>(5, 1).unwrap();
-        assert_eq!(samples.sk.len(), N8192Params::DEGREE);
-        assert_eq!(samples.e.len(), N8192Params::DEGREE);
-        assert_eq!(samples.e_sm.len(), N8192Params::DEGREE);
+        let samples = sample_dealer::<ProdParams>(5, 1).unwrap();
+        assert_eq!(samples.sk.len(), ProdParams::DEGREE);
+        assert_eq!(samples.e.len(), ProdParams::DEGREE);
+        assert_eq!(samples.e_sm.len(), ProdParams::DEGREE);
         assert!(samples.sk.iter().all(|&c| (-1..=1).contains(&c)));
         // The smudging noise must be wide (statistical hiding), i.e. far
-        // beyond a single 58-bit channel.
+        // beyond a single 61-bit channel.
         let bits = smudging_max_bits(&[samples]);
-        assert!(bits > 58, "smudging too small: {bits} bits");
+        assert!(bits > 61, "smudging too small: {bits} bits");
     }
 }

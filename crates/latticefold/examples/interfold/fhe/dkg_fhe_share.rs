@@ -5,17 +5,17 @@
 
 #[cfg(feature = "fhe-bridge")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use latticefold::{fhe_bridge::round_trip_share, vdkg_params::N4096_DEGREE};
+    use latticefold::{fhe_bridge::round_trip_share, vdkg_params::DEMO_DEGREE};
 
     let share = 0x1234_5678u64;
     let decoded = round_trip_share(share)?;
     assert_eq!(decoded.first().copied(), Some(share));
-    assert_eq!(decoded.len(), N4096_DEGREE);
+    assert_eq!(decoded.len(), DEMO_DEGREE);
     assert!(decoded.iter().skip(1).all(|coefficient| *coefficient == 0));
 
     println!("fhe.rs BFV share round trip: validated");
     println!(
-        "degree = {N4096_DEGREE}, share = {share}, decoded[0] = {}",
+        "degree = {DEMO_DEGREE}, share = {share}, decoded[0] = {}",
         decoded[0]
     );
     Ok(())

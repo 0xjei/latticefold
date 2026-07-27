@@ -1,21 +1,24 @@
 //! Opt-in bridge to the pinned `fhe.rs` development branch.
 //!
-//! This module contains the native FHE integration path: threshold Shamir
-//! sharing over the full RNS modulus Z_Q, per-channel R2 sharing proofs,
+//! This module contains the native FHE integration path: channel-native
+//! threshold Shamir sharing per RNS channel, per-channel R2 sharing proofs,
 //! BFV share transport, and metadata-bound R4 commitment openings folded
-//! per channel with NIFS. The sharing is done once over Z_Q and projected
-//! to each RNS channel, so the per-channel shares are CRT-congruent by
-//! construction.
+//! per channel with NIFS. The sharing polynomials are sampled directly on
+//! each channel ([`generate_channel_sharing`]), so the per-channel sharings
+//! of one short secret are CRT-congruent by construction.
 
 use std::{error::Error, sync::Arc};
 
 use ark_ff::{Field, PrimeField};
 use cyclotomic_rings::rings::{
+    N16384Q0ChallengeSet, N16384Q0Field, N16384Q0RingNTT, N16384Q0RingPoly,
+    N16384Q1ChallengeSet, N16384Q1Field, N16384Q1RingNTT, N16384Q1RingPoly,
+    N16384Q2ChallengeSet, N16384Q2Field, N16384Q2RingNTT, N16384Q2RingPoly,
+    N16384Q3ChallengeSet, N16384Q3Field, N16384Q3RingNTT, N16384Q3RingPoly,
     N4096Q0ChallengeSet, N4096Q0Field, N4096Q0RingNTT, N4096Q0RingPoly, N4096Q1ChallengeSet,
     N4096Q1Field, N4096Q1RingNTT, N4096Q1RingPoly, N4096Q2ChallengeSet, N4096Q2Field,
-    N4096Q2RingNTT, N4096Q2RingPoly, N8192Q0ChallengeSet, N8192Q0Field, N8192Q0RingNTT,
-    N8192Q0RingPoly, N8192Q1ChallengeSet, N8192Q1Field, N8192Q1RingNTT, N8192Q1RingPoly,
-    N8192Q2ChallengeSet, N8192Q2Field, N8192Q2RingNTT, N8192Q2RingPoly,
+    N4096Q2RingNTT, N4096Q2RingPoly, N4096Q3ChallengeSet, N4096Q3Field, N4096Q3RingNTT,
+    N4096Q3RingPoly,
 };
 use fhe::bfv::{self, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe_rand::rng;
@@ -37,10 +40,7 @@ use crate::{
         NIFSProver, NIFSVerifier,
     },
     transcript::{poseidon::PoseidonTranscript, Transcript},
-    vdkg_params::{
-        N4096Params, N8192Params, VdkgParams, N4096_DEGREE, N4096_THRESHOLD_MODULI,
-        N4096_THRESHOLD_MODULUS_PRODUCT,
-    },
+    vdkg_params::{DemoParams, ProdParams, VdkgParams, DEMO_DEGREE},
 };
 
 const RECIPIENT_STRIDE: u64 = 1 << 16;
@@ -188,7 +188,7 @@ impl CommitteeConfig {
     /// `(1 + N) * L`, but never smaller than the live constraint count.
     fn r2_ccs_rows(&self) -> usize {
         usize::max(
-            self.r2_witness_len() * NativeR4Params::L,
+            self.r2_witness_len() * DemoR4Params::L,
             self.r2_constraint_rows(),
         )
         .next_power_of_two()
@@ -196,9 +196,9 @@ impl CommitteeConfig {
 }
 
 #[derive(Clone)]
-struct NativeR4Params;
+struct DemoR4Params;
 
-impl DecompositionParams for NativeR4Params {
+impl DecompositionParams for DemoR4Params {
     const B: u128 = 1 << 15;
     const L: usize = 5;
     const B_SMALL: usize = 2;
@@ -208,32 +208,32 @@ impl DecompositionParams for NativeR4Params {
 }
 
 #[derive(Clone)]
-struct Native8192R4Params;
+struct ProdR4Params;
 
-impl DecompositionParams for Native8192R4Params {
+impl DecompositionParams for ProdR4Params {
     const B: u128 = 1 << 15;
     const L: usize = 5;
     const B_SMALL: usize = 2;
-    // The q channels are 58-bit fields; retain enough binary limbs for signed
+    // The q channels are 61-bit fields; retain enough binary limbs for signed
     // field representatives and the public-input decomposition used by NIFS.
-    const K: usize = 59;
+    const K: usize = 66;
 }
 
 /// Encrypt and decrypt one polynomial share using the individual BFV
-/// transport instance (N=4096 parameter set).
+/// transport instance (demo parameter set).
 pub fn round_trip_share(share: u64) -> Result<Vec<u64>, Box<dyn Error>> {
-    let mut message = vec![0u64; N4096_DEGREE];
+    let mut message = vec![0u64; DEMO_DEGREE];
     message[0] = share;
     round_trip_poly_share(&message)
 }
 
-/// Encrypt and decrypt a complete degree-N polynomial share (N=4096 set).
+/// Encrypt and decrypt a complete degree-N polynomial share (demo set).
 pub fn round_trip_poly_share(message: &[u64]) -> Result<Vec<u64>, Box<dyn Error>> {
-    ShareTransport::<N4096Params>::new()?.round_trip(message)
+    ShareTransport::<DemoParams>::new()?.round_trip(message)
 }
 
 /// One recipient BFV transport instance shared across channels and dealers.
-pub struct ShareTransport<P: VdkgParams = N4096Params> {
+pub struct ShareTransport<P: VdkgParams = DemoParams> {
     params: Arc<bfv::BfvParameters>,
     secret_key: SecretKey,
     public_key: PublicKey,
@@ -310,139 +310,18 @@ fn metadata_domain(
     Ok(domain)
 }
 
-/// Threshold Shamir sharing over the full RNS modulus Z_Q.
-///
-/// Each coefficient of the secret polynomial is shared with an independent
-/// degree T-1 polynomial over Z_Q. Projecting the shares mod each q channel
-/// yields per-channel sharings that agree with the Z_Q sharing under CRT.
-pub struct ZqSharing {
-    /// Secret polynomial coefficients, reduced mod Q.
-    pub secret: Vec<u128>,
-    /// One share polynomial per committee member, evaluated at x = 1..=H.
-    pub shares: Vec<Vec<u128>>,
-}
-
-fn mul_mod_q(a: u128, b: u128) -> u128 {
-    // Q < 2^100, so a plain `a * b` would overflow u128 (2^200) whenever both
-    // operands are near Q — which happens in the degree-(T-1) Horner evaluation
-    // once a power x^k mod Q grows to full size. Reduce with a division-free
-    // double-and-add instead: every intermediate stays below 2^101 < 2^128.
-    const Q: u128 = N4096_THRESHOLD_MODULUS_PRODUCT;
-    let mut a = a % Q;
-    let mut b = b % Q;
-    let mut result = 0u128;
-    while b != 0 {
-        if b & 1 == 1 {
-            result += a;
-            if result >= Q {
-                result -= Q;
-            }
-        }
-        a <<= 1;
-        if a >= Q {
-            a -= Q;
-        }
-        b >>= 1;
-    }
-    result
-}
-
-/// Generate a degree `T - 1` sharing of a secret polynomial over Z_Q, with one
-/// share per committee point `x = 1..=N`.
-pub fn generate_zq_sharing(
-    secret: &[u64],
-    config: &CommitteeConfig,
-    rng: &mut impl rand::Rng,
-) -> ZqSharing {
-    let q = N4096_THRESHOLD_MODULUS_PRODUCT;
-    let secret_mod_q = secret
-        .iter()
-        .map(|&coefficient| coefficient as u128 % q)
-        .collect::<Vec<_>>();
-
-    // Independent random coefficients a_1..a_{T-1} per secret coefficient.
-    let randomness: Vec<Vec<u128>> = (0..secret.len())
-        .map(|_| {
-            (1..config.threshold_t)
-                .map(|_| {
-                    let raw = ((rng.next_u64() as u128) << 64) | rng.next_u64() as u128;
-                    raw % q
-                })
-                .collect()
-        })
-        .collect();
-
-    let shares = (1..=config.committee_n as u128)
-        .map(|x| {
-            // x^1..x^{T-1} mod Q depend only on the evaluation point, so hoist
-            // them out of the per-coefficient loop over the 4096 coefficients.
-            let mut powers = Vec::with_capacity(config.threshold_t.saturating_sub(1));
-            let mut power = 1u128;
-            for _ in 1..config.threshold_t {
-                power = mul_mod_q(power, x);
-                powers.push(power);
-            }
-            secret_mod_q
-                .iter()
-                .zip(&randomness)
-                .map(|(&constant, coefficients)| {
-                    let mut value = constant;
-                    for (&coefficient, &power) in coefficients.iter().zip(&powers) {
-                        value = (value + mul_mod_q(coefficient, power)) % q;
-                    }
-                    value
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect();
-
-    ZqSharing {
-        secret: secret_mod_q,
-        shares,
-    }
-}
-
-/// Project a Z_Q polynomial to one RNS channel.
-pub fn project_channel(values: &[u128], channel: usize) -> Vec<u64> {
-    let modulus = N4096_THRESHOLD_MODULI[channel] as u128;
-    values
-        .iter()
-        .map(|&value| (value % modulus) as u64)
-        .collect()
-}
-
 /// The whole committee's sharing material on a single RNS channel: per-dealer
 /// secrets and per-dealer, per-recipient shares, all reduced mod q_l.
 ///
-/// This is the canonical input of the per-channel R2/R4 machinery. It can be
-/// produced either by projecting Z_Q sharings (the N=4096 path) or by
-/// sampling the sharing polynomials directly on the channel
-/// ([`generate_channel_sharing`], used when Q does not fit `u128`).
+/// This is the canonical input of the per-channel R2/R4 machinery, produced
+/// by sampling the sharing polynomials directly on the channel
+/// ([`generate_channel_sharing`]); the channel sharings of one short secret
+/// are consistent with a single Z_Q sharing under CRT.
 pub struct ChannelSharings {
     /// Per-dealer secret polynomials on this channel.
     pub secrets: Vec<Vec<u64>>,
     /// Per-dealer, per-recipient share polynomials on this channel.
     pub shares: Vec<Vec<Vec<u64>>>,
-}
-
-/// Project a committee's Z_Q sharings to one RNS channel.
-pub fn project_sharings(sharings: &[ZqSharing], channel: usize) -> ChannelSharings {
-    ChannelSharings {
-        secrets: sharings
-            .iter()
-            .map(|sharing| project_channel(&sharing.secret, channel))
-            .collect(),
-        shares: sharings
-            .iter()
-            .map(|sharing| {
-                sharing
-                    .shares
-                    .iter()
-                    .map(|share| project_channel(share, channel))
-                    .collect()
-            })
-            .collect(),
-    }
 }
 
 /// Generate the committee's sharings directly on one RNS channel: every
@@ -493,34 +372,6 @@ pub fn generate_channel_sharing<P: VdkgParams>(
         secrets: secrets.to_vec(),
         shares,
     }
-}
-
-/// Garner CRT reconstruction of the three channel residues into Z_Q.
-pub fn crt_combine(residues: [u64; 3]) -> u128 {
-    let [q0, q1, q2] = N4096_THRESHOLD_MODULI;
-    let inv = |a: u128, modulus: u128| {
-        // Fermat inversion; the channel moduli are prime.
-        let mut result = 1u128;
-        let mut base = a % modulus;
-        let mut exponent = modulus - 2;
-        while exponent != 0 {
-            if exponent & 1 == 1 {
-                result = result * base % modulus;
-            }
-            base = base * base % modulus;
-            exponent >>= 1;
-        }
-        result
-    };
-
-    let r0 = residues[0] as u128;
-    let t1 = (residues[1] as u128 + q1 as u128 - r0 % q1 as u128) * inv(q0 as u128, q1 as u128)
-        % q1 as u128;
-    let x01 = r0 + q0 as u128 * t1;
-    let t2 = (residues[2] as u128 + q2 as u128 - x01 % q2 as u128)
-        * inv(q0 as u128 * q1 as u128 % q2 as u128, q2 as u128)
-        % q2 as u128;
-    x01 + q0 as u128 * q1 as u128 * t2
 }
 
 macro_rules! define_channel_bridge {
@@ -1256,9 +1107,9 @@ macro_rules! define_channel_bridge {
 }
 
 define_channel_bridge!(
-    q0,
-    N4096Params,
-    NativeR4Params,
+    demo_q0,
+    DemoParams,
+    DemoR4Params,
     N4096Q0RingNTT,
     N4096Q0RingPoly,
     N4096Q0Field,
@@ -1268,9 +1119,9 @@ define_channel_bridge!(
     n4096_s1
 );
 define_channel_bridge!(
-    q1,
-    N4096Params,
-    NativeR4Params,
+    demo_q1,
+    DemoParams,
+    DemoR4Params,
     N4096Q1RingNTT,
     N4096Q1RingPoly,
     N4096Q1Field,
@@ -1280,9 +1131,9 @@ define_channel_bridge!(
     n4096_s1
 );
 define_channel_bridge!(
-    q2,
-    N4096Params,
-    NativeR4Params,
+    demo_q2,
+    DemoParams,
+    DemoR4Params,
     N4096Q2RingNTT,
     N4096Q2RingPoly,
     N4096Q2Field,
@@ -1292,51 +1143,75 @@ define_channel_bridge!(
     n4096_s1
 );
 define_channel_bridge!(
-    n8192_q0,
-    N8192Params,
-    Native8192R4Params,
-    N8192Q0RingNTT,
-    N8192Q0RingPoly,
-    N8192Q0Field,
-    N8192Q0ChallengeSet,
+    demo_q3,
+    DemoParams,
+    DemoR4Params,
+    N4096Q3RingNTT,
+    N4096Q3RingPoly,
+    N4096Q3Field,
+    N4096Q3ChallengeSet,
+    3,
+    n4096_s0,
+    n4096_s1
+);
+define_channel_bridge!(
+    prod_q0,
+    ProdParams,
+    ProdR4Params,
+    N16384Q0RingNTT,
+    N16384Q0RingPoly,
+    N16384Q0Field,
+    N16384Q0ChallengeSet,
     0,
-    n8192_s0,
-    n8192_s1
+    n16384_s0,
+    n16384_s1
 );
 define_channel_bridge!(
-    n8192_q1,
-    N8192Params,
-    Native8192R4Params,
-    N8192Q1RingNTT,
-    N8192Q1RingPoly,
-    N8192Q1Field,
-    N8192Q1ChallengeSet,
+    prod_q1,
+    ProdParams,
+    ProdR4Params,
+    N16384Q1RingNTT,
+    N16384Q1RingPoly,
+    N16384Q1Field,
+    N16384Q1ChallengeSet,
     1,
-    n8192_s0,
-    n8192_s1
+    n16384_s0,
+    n16384_s1
 );
 define_channel_bridge!(
-    n8192_q2,
-    N8192Params,
-    Native8192R4Params,
-    N8192Q2RingNTT,
-    N8192Q2RingPoly,
-    N8192Q2Field,
-    N8192Q2ChallengeSet,
+    prod_q2,
+    ProdParams,
+    ProdR4Params,
+    N16384Q2RingNTT,
+    N16384Q2RingPoly,
+    N16384Q2Field,
+    N16384Q2ChallengeSet,
     2,
-    n8192_s0,
-    n8192_s1
+    n16384_s0,
+    n16384_s1
+);
+define_channel_bridge!(
+    prod_q3,
+    ProdParams,
+    ProdR4Params,
+    N16384Q3RingNTT,
+    N16384Q3RingPoly,
+    N16384Q3Field,
+    N16384Q3ChallengeSet,
+    3,
+    n16384_s0,
+    n16384_s1
 );
 
 /// Run the real BFV transport and prove one native q0 R4 commitment opening.
 pub fn round_trip_share_and_prove_r4(share: u64) -> Result<(), Box<dyn Error>> {
     let decoded = round_trip_share(share)?;
-    q0::prove_r4_opening(&decoded, 1, 2, &CommitteeConfig::default())
+    demo_q0::prove_r4_opening(&decoded, 1, 2, &CommitteeConfig::default())
 }
 
-/// Generate a threshold Shamir share over Z_Q, transport the recipient's q0
-/// projection with BFV, and bind its R4 opening to the sender, recipient, and
-/// channel metadata.
+/// Generate a threshold Shamir share natively on the q0 channel, transport
+/// the recipient's share with BFV, and bind its R4 opening to the sender,
+/// recipient, and channel metadata.
 pub fn round_trip_shamir_share_and_prove_r4(
     secret: u64,
     sender_id: u64,
@@ -1346,7 +1221,7 @@ pub fn round_trip_shamir_share_and_prove_r4(
     if channel_id != 0 {
         return Err("the single-share path runs on the q0 channel".into());
     }
-    if secret >= N4096_THRESHOLD_MODULI[0] {
+    if secret >= DemoParams::THRESHOLD_MODULI[0] {
         return Err("secret does not fit the q0 threshold domain".into());
     }
     let config = CommitteeConfig::default();
@@ -1361,29 +1236,25 @@ pub fn round_trip_shamir_share_and_prove_r4(
 
     // OS CSPRNG: the sharing polynomial coefficients are secret.
     let mut rng = ark_std::rand::rngs::OsRng;
-    let mut secret_poly = vec![0u64; N4096_DEGREE];
+    let mut secret_poly = vec![0u64; DEMO_DEGREE];
     secret_poly[0] = secret;
-    let sharing = generate_zq_sharing(&secret_poly, &config, &mut rng);
+    let sharings = generate_channel_sharing::<DemoParams>(&[secret_poly], &config, 0, &mut rng);
+    let q0_shares = &sharings.shares[0];
 
     // Native threshold reconstruction check from the first T q0 shares.
-    let q0_shares = sharing
-        .shares
-        .iter()
-        .map(|share| project_channel(share, 0))
-        .collect::<Vec<_>>();
     let reconstruction = (0..config.threshold_t)
         .map(|index| (index as u64 + 1, q0_shares[index][0]))
         .collect::<Vec<_>>();
     assert_eq!(
-        q0::reconstruct_constant(&reconstruction)?,
-        secret % N4096_THRESHOLD_MODULI[0],
+        demo_q0::reconstruct_constant(&reconstruction)?,
+        secret % DemoParams::THRESHOLD_MODULI[0],
         "threshold reconstruction did not recover the secret"
     );
 
-    q0::prove_r2_sharing(&project_channel(&sharing.secret, 0), &q0_shares, &config)?;
+    demo_q0::prove_r2_sharing(&sharings.secrets[0], q0_shares, &config)?;
 
     let recipient_share = round_trip_poly_share(&q0_shares[(recipient_id - 1) as usize])?;
-    q0::prove_r4_opening(&recipient_share, sender_id, recipient_id, &config)
+    demo_q0::prove_r4_opening(&recipient_share, sender_id, recipient_id, &config)
 }
 
 /// Run the full H-dealer committee through one recipient transport key on the
@@ -1392,56 +1263,55 @@ pub fn round_trip_shamir_committee_r4(config: &CommitteeConfig) -> Result<(), Bo
     config.validate()?;
     let recipient = config.recipient_id;
 
-    let transport = crate::r3_bridge::R3Transport::new(N4096_DEGREE)?;
+    let transport = crate::r3_bridge::R3Transport::new(DEMO_DEGREE)?;
     // OS CSPRNG: the sharing polynomial coefficients are secret.
     let mut sharing_rng = ark_std::rand::rngs::OsRng;
     let gen_start = std::time::Instant::now();
-    let sharings = (0..config.honest_h as u64)
+    let q0_modulus = DemoParams::THRESHOLD_MODULI[0];
+    let secrets = (0..config.honest_h as u64)
         .map(|dealer| {
-            let mut secret_poly = vec![0u64; N4096_DEGREE];
-            secret_poly[0] = 0x1234_0000 + dealer + 1;
-            generate_zq_sharing(&secret_poly, config, &mut sharing_rng)
+            let mut secret_poly = vec![0u64; DEMO_DEGREE];
+            secret_poly[0] = (0x1234_0000 + dealer + 1) % q0_modulus;
+            secret_poly
         })
         .collect::<Vec<_>>();
+    let sharings = generate_channel_sharing::<DemoParams>(&secrets, config, 0, &mut sharing_rng);
     if std::env::var_os("DKG_PHASE_TIMING").is_some() {
         eprintln!(
-            "[gen] {} Z_Q sharings (N={}, T={}): {:.1}s",
-            sharings.len(),
+            "[gen] {} q0 channel sharings (N={}, T={}): {:.1}s",
+            secrets.len(),
             config.committee_n,
             config.threshold_t,
             gen_start.elapsed().as_secs_f64()
         );
     }
 
-    let decoded = q0::fold_committee_r4(&transport, &project_sharings(&sharings, 0), config, 0)?;
+    let decoded = demo_q0::fold_committee_r4(&transport, &sharings, config, 0)?;
 
     // DKG semantics: the aggregated received shares are a threshold share of
     // the aggregated secret. Reconstruct the aggregate from T aggregated
     // shares of the untransported committee and compare the constant terms.
-    let q0_modulus = N4096_THRESHOLD_MODULI[0] as u128;
-    let aggregated_secret = sharings
+    let aggregated_secret = secrets
         .iter()
-        .fold(0u128, |acc, sharing| (acc + sharing.secret[0]) % q0_modulus)
-        as u64
-        % N4096_THRESHOLD_MODULI[0];
+        .fold(0u64, |acc, secret| (acc + secret[0]) % q0_modulus);
     let aggregated_shares = (0..config.threshold_t)
         .map(|index| {
-            let sum = sharings.iter().fold(0u128, |acc, sharing| {
-                (acc + sharing.shares[index][0] % q0_modulus) % q0_modulus
+            let sum = sharings.shares.iter().fold(0u64, |acc, shares| {
+                (acc + shares[index][0]) % q0_modulus
             });
-            (index as u64 + 1, sum as u64)
+            (index as u64 + 1, sum)
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        q0::reconstruct_constant(&aggregated_shares)?,
+        demo_q0::reconstruct_constant(&aggregated_shares)?,
         aggregated_secret,
         "aggregated threshold reconstruction did not recover the aggregate secret"
     );
 
     // The transported recipient shares must match the untransported ones.
-    for (sharing, decoded_share) in sharings.iter().zip(&decoded) {
+    for (shares, decoded_share) in sharings.shares.iter().zip(&decoded) {
         assert_eq!(
-            project_channel(&sharing.shares[recipient - 1], 0),
+            shares[recipient - 1],
             *decoded_share,
             "BFV transport altered a committee share"
         );
@@ -1450,93 +1320,94 @@ pub fn round_trip_shamir_committee_r4(config: &CommitteeConfig) -> Result<(), Bo
     Ok(())
 }
 
-/// Run the H-dealer committee across all three RNS channels: one Z_Q sharing
-/// per dealer projected to q0/q1/q2, per-channel R2 proofs, BFV transport,
-/// per-channel folded R4 accumulators, and a CRT consistency check that the
-/// three transported channel projections recombine to the Z_Q share.
+/// Run the H-dealer committee across all four RNS channels: one short toy
+/// secret per dealer shared natively on q0/q1/q2/q3 (CRT-consistent by
+/// construction), per-channel R2 proofs, BFV transport, per-channel folded R4
+/// accumulators, and a per-channel consistency check that the transported
+/// shares match the untransported ones.
 pub fn round_trip_multichannel_committee_r4(
     config: &CommitteeConfig,
 ) -> Result<(), Box<dyn Error>> {
     config.validate()?;
     let recipient = config.recipient_id;
 
-    let transport = crate::r3_bridge::R3Transport::new(N4096_DEGREE)?;
+    let transport = crate::r3_bridge::R3Transport::new(DEMO_DEGREE)?;
     // OS CSPRNG: the sharing polynomial coefficients are secret.
     let mut sharing_rng = ark_std::rand::rngs::OsRng;
-    let sharings = (0..config.honest_h as u64)
+    let secrets = (0..config.honest_h as u64)
         .map(|dealer| {
-            let mut secret_poly = vec![0u64; N4096_DEGREE];
+            let mut secret_poly = vec![0u64; DEMO_DEGREE];
             secret_poly[0] = 0x4321_0000 + dealer + 1;
-            generate_zq_sharing(&secret_poly, config, &mut sharing_rng)
+            secret_poly
+        })
+        .collect::<Vec<_>>();
+    let sharings = (0..4)
+        .map(|channel| {
+            generate_channel_sharing::<DemoParams>(&secrets, config, channel, &mut sharing_rng)
         })
         .collect::<Vec<_>>();
 
-    // The three RNS channels share only the read-only sharings and transport,
-    // so their (sequential) R4 fold chains are independent. Run them on three
+    // The four RNS channels share only the read-only sharings and transport,
+    // so their (sequential) R4 fold chains are independent. Run them on four
     // threads concurrently — the dominant per-channel cost is the serial fold
-    // chain, so this is close to a 3x wall-clock win. Errors are stringified to
-    // cross the thread boundary (Box<dyn Error> is not Send).
-    let (decoded_q0, decoded_q1, decoded_q2) = std::thread::scope(|scope| {
+    // chain, so this is close to a 4x wall-clock win. Errors are stringified
+    // to cross the thread boundary (Box<dyn Error> is not Send).
+    let (decoded_q0, decoded_q1, decoded_q2, decoded_q3) = std::thread::scope(|scope| {
         let handle_q0 = scope
-            .spawn(|| q0::fold_committee_r4(&transport, &project_sharings(&sharings, 0), config, 0).map_err(|e| e.to_string()));
+            .spawn(|| demo_q0::fold_committee_r4(&transport, &sharings[0], config, 0).map_err(|e| e.to_string()));
         let handle_q1 = scope
-            .spawn(|| q1::fold_committee_r4(&transport, &project_sharings(&sharings, 1), config, 0).map_err(|e| e.to_string()));
-        let decoded_q2 = q2::fold_committee_r4(&transport, &project_sharings(&sharings, 2), config, 0).map_err(|e| e.to_string());
+            .spawn(|| demo_q1::fold_committee_r4(&transport, &sharings[1], config, 0).map_err(|e| e.to_string()));
+        let handle_q2 = scope
+            .spawn(|| demo_q2::fold_committee_r4(&transport, &sharings[2], config, 0).map_err(|e| e.to_string()));
+        let decoded_q3 = demo_q3::fold_committee_r4(&transport, &sharings[3], config, 0).map_err(|e| e.to_string());
         (
             handle_q0.join().unwrap_or_else(|_| Err("q0 fold thread panicked".to_string())),
             handle_q1.join().unwrap_or_else(|_| Err("q1 fold thread panicked".to_string())),
-            decoded_q2,
+            handle_q2.join().unwrap_or_else(|_| Err("q2 fold thread panicked".to_string())),
+            decoded_q3,
         )
     });
-    let decoded_q0 = decoded_q0?;
-    let decoded_q1 = decoded_q1?;
-    let decoded_q2 = decoded_q2?;
+    let decoded = [decoded_q0?, decoded_q1?, decoded_q2?, decoded_q3?];
 
-    // CRT consistency: the transported per-channel projections of every
-    // dealer share must recombine coefficient-wise to the Z_Q share.
-    for (dealer_index, sharing) in sharings.iter().enumerate() {
-        let expected = &sharing.shares[recipient - 1];
-        for coefficient in 0..N4096_DEGREE {
-            let combined = crt_combine([
-                decoded_q0[dealer_index][coefficient],
-                decoded_q1[dealer_index][coefficient],
-                decoded_q2[dealer_index][coefficient],
-            ]);
+    // Per-channel consistency: the transported shares of every dealer must
+    // match the untransported channel shares (which are CRT-consistent across
+    // channels by construction, being sharings of one short secret).
+    for (channel, decoded_channel) in decoded.iter().enumerate() {
+        for (dealer_index, decoded_share) in decoded_channel.iter().enumerate() {
             assert_eq!(
-                combined, expected[coefficient],
-                "channel projections of dealer {dealer_index} did not recombine at \
-                 coefficient {coefficient}"
+                *decoded_share, sharings[channel].shares[dealer_index][recipient - 1],
+                "BFV transport altered dealer {dealer_index}'s share on channel {channel}"
             );
         }
     }
 
-    // Per-channel aggregated reconstruction, then CRT-combine the aggregate.
-    let mut aggregate_residues = [0u64; 3];
+    // Per-channel aggregated reconstruction: each channel recovers the
+    // aggregated secret mod q_l of the same short aggregate secret.
     let reconstructors = [
-        q0::reconstruct_constant as fn(&[(u64, u64)]) -> Result<u64, Box<dyn Error>>,
-        q1::reconstruct_constant,
-        q2::reconstruct_constant,
+        demo_q0::reconstruct_constant as fn(&[(u64, u64)]) -> Result<u64, Box<dyn Error>>,
+        demo_q1::reconstruct_constant,
+        demo_q2::reconstruct_constant,
+        demo_q3::reconstruct_constant,
     ];
-    for channel in 0..3 {
-        let modulus = N4096_THRESHOLD_MODULI[channel] as u128;
+    for channel in 0..4 {
+        let modulus = DemoParams::THRESHOLD_MODULI[channel];
         let aggregated_shares = (0..config.threshold_t)
             .map(|index| {
-                let sum = sharings.iter().fold(0u128, |acc, sharing| {
-                    (acc + sharing.shares[index][0] % modulus) % modulus
+                let sum = sharings[channel].shares.iter().fold(0u64, |acc, shares| {
+                    (acc + shares[index][0]) % modulus
                 });
-                (index as u64 + 1, sum as u64)
+                (index as u64 + 1, sum)
             })
             .collect::<Vec<_>>();
-        aggregate_residues[channel] = reconstructors[channel](&aggregated_shares)?;
+        let aggregated_secret = secrets
+            .iter()
+            .fold(0u64, |acc, secret| (acc + secret[0]) % modulus);
+        assert_eq!(
+            reconstructors[channel](&aggregated_shares)?,
+            aggregated_secret,
+            "channel {channel} aggregate reconstruction did not recover the aggregate secret"
+        );
     }
-    let aggregated_secret = sharings.iter().fold(0u128, |acc, sharing| {
-        (acc + sharing.secret[0]) % N4096_THRESHOLD_MODULUS_PRODUCT
-    });
-    assert_eq!(
-        crt_combine(aggregate_residues),
-        aggregated_secret,
-        "multi-channel aggregate reconstruction did not recombine to the Z_Q secret"
-    );
 
     Ok(())
 }
