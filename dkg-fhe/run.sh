@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 #
-# Driver for the native N=4096 FHE-bridge DKG committee demonstrations.
+# Driver for the native FHE-bridge DKG committee demonstrations (DemoParams
+# d=4096 / ProdParams d=16384, four RNS channels).
 #
-# Runs the configurable threshold-DKG committee path (Z_Q Shamir sharing ->
-# per-channel GRS-syndrome R2 proofs -> BFV share transport -> metadata-bound,
-# session-bound R4 openings folded per channel with NIFS).
+# Runs the configurable threshold-DKG committee path (channel-native Shamir
+# sharing -> per-channel GRS-syndrome R2 proofs -> proven R3 digit transport
+# -> metadata-bound, session-bound R4 openings folded per channel with NIFS
+# fold trees).
 #
 # Usage:
 #   ./run.sh [--example committee|multichannel] \
@@ -13,8 +15,8 @@
 #
 # Examples:
 #   ./run.sh                                   # defaults: committee, N=H=5, T=3
-#   ./run.sh --n 100 --h 51 --t 27             # full committee (~20 min single-ch)
-#   ./run.sh --example multichannel --n 24 --h 16 --t 8   # 3 channels, ~3x
+#   ./run.sh --n 100 --h 51 --t 27             # full committee
+#   ./run.sh --example full-flow -- --params prod --n 5 --h 5 --t 3  # prod e2e
 #   ./run.sh --timing                          # print per-phase timings
 #
 # Requires the fhe.rs MSRV toolchain (see README.md):

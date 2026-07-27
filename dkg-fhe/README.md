@@ -1,4 +1,4 @@
-# Native N=4096 FHE-bridge DKG committee runner
+# Native FHE-bridge DKG committee runner (DemoParams / ProdParams)
 
 Self-contained entry point for the native (non-toy) threshold-DKG committee
 demonstrations built on the `latticefold` primitives plus the pinned
@@ -9,15 +9,17 @@ demonstrations built on the `latticefold` primitives plus the pinned
 
 A configurable committee (`N` members, `H` honest dealers, threshold `T`) runs:
 
-1. **Z_Q Shamir sharing** — each dealer shares a degree-4096 secret polynomial
-   with independent degree-`T-1` polynomials over the full RNS modulus `Q`.
-2. **CRT projection** — shares are projected to the `q0/q1/q2` RNS channels;
-   the per-channel sharings are CRT-congruent by construction.
+1. **Channel-native Shamir sharing** — each dealer shares its secret
+   polynomial natively per RNS channel (`generate_channel_sharing`), so the
+   per-channel sharings are CRT-consistent by construction. The demo set uses
+   four 34-bit channels (d=4096, `DemoParams`); production uses four 61-bit
+   channels (d=16384, `ProdParams`).
 3. **R2 sharing proofs** — one linearized GRS-syndrome relation per dealer
    proves the `N` channel shares form a degree-`T-1` sharing
    (`(N-T)` parity rows + 1 Lagrange-at-zero consistency row).
-4. **BFV transport** — the recipient's share is encrypted/decrypted through a
-   per-recipient BFV instance.
+4. **Proven R3 transport** — the recipient's share moves as its R2-committed
+   digits, each encrypted with fhe.rs extended encryption and proven natively
+   per transport prime, folded per prime.
 5. **Metadata- and session-bound R4 folding** — each received opening is bound
    to `(sender, recipient, channel)` and, via transcript absorption, to
    `(session_id, N, H, T, channel)`; the `H` openings are folded per channel
