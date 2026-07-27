@@ -163,6 +163,13 @@ where
         return Err(tree_error("cannot fold an empty instance list"));
     }
 
+    let progress = std::env::var_os("DKG_PROGRESS").is_some();
+    let total = instances.len();
+    let start = std::time::Instant::now();
+    if progress {
+        eprintln!("[fold-tree] {total} instances: leaf linearizations started");
+    }
+
     // Leaves: one linearization per instance (independent, parallel).
     let mut accumulators = par_map(
         instances
@@ -174,6 +181,12 @@ where
             leaf::<NTT, P, T>(index, cm, witness, ccs, absorb_label, skip_verify)
         },
     )?;
+    if progress {
+        eprintln!(
+            "[fold-tree] {total} leaves done in {:.1}s; fold levels started",
+            start.elapsed().as_secs_f64()
+        );
+    }
 
     // Levels: pairwise acc+acc folds (independent within a level, parallel).
     let mut level = 1u64;
@@ -183,6 +196,8 @@ where
         } else {
             None
         };
+        let level_size = accumulators.len() / 2;
+        let level_start = std::time::Instant::now();
         let mut pairs: Vec<(u64, Accumulator<NTT>, Accumulator<NTT>)> = Vec::new();
         let mut iter = accumulators.into_iter();
         let mut index = 0u64;
@@ -205,7 +220,20 @@ where
         if let Some(tail) = promoted {
             accumulators.push(tail);
         }
+        if progress {
+            eprintln!(
+                "[fold-tree] level {level} ({level_size} folds) done in {:.1}s (total {:.1}s)",
+                level_start.elapsed().as_secs_f64(),
+                start.elapsed().as_secs_f64()
+            );
+        }
         level += 1;
+    }
+    if progress {
+        eprintln!(
+            "[fold-tree] complete: {total} instances -> 1 accumulator in {:.1}s",
+            start.elapsed().as_secs_f64()
+        );
     }
 
     accumulators
