@@ -192,10 +192,13 @@ Remaining known gaps (documented cost deltas, not yet implemented):
 | `ajtai_opening_sz/` | **CURRENT** — per-track decider at the ProdParams channel 0 (61-bit, N=16384). Measured: **6.05M opcodes / 10.2M gates** (2x the N=8192 figure, linear), witness solved. This is THE per-track decider number for production: the C5 aggregate = 4 of these (one per channel) + the recursion/split below. |
 | `c7/` | **CURRENT** — 4-channel final-decryption wrapper at ProdParams constants (Q ~ 2^244, Delta ~ 2^224), N=16384: **5.06M opcodes / 12.5M gates**, `bb prove`+`verify` pass (UltraHonk, keccak). Decode is the two-branch centered form (positive noise or u + Q); unique decode except the measure-zero boundary. Runs **once per threshold decryption**. |
 | `c5_prod/` | **Vectors ready** (real 4-track export from `dkg_wrapper_export --params prod`); the 4-track circuit itself is NOT written — the per-track + recursion path is now mandatory (4 x 6.05M opcodes in one circuit is not practical). |
-| `c5_8192/` | **DEAD** — built over the dropped N8192 chain (moduli no longer exist). Kept for reference only. |
-| `c5_sz/` | **STALE** — 3-track SZ prototype over the old 58-bit moduli at N=1024. |
-| `c5_4096/` | **DEAD skeleton** — no main circuit; its 3 old demo primes survive in DemoParams but the 4th track is missing. |
 | `modulo/` | Fine — parameter-agnostic (now supports moduli up to 2^64). |
+
+Removed in the fc5e5ab follow-up cleanup: `c5_8192/` (dead — built over the
+dropped N8192 chain), `c5_sz/` (stale 3-track SZ prototype over the old
+58-bit moduli at N=1024), and `c5_4096/` (dead skeleton without a main
+circuit). Their measurement tables above are kept as historical records of
+the SZ design's cost shape.
 
 Export side: `wrapper_export::export_c5` now iterates all FOUR channels and
 `dkg_wrapper_export` takes `--params demo|prod` (writes `c5_demo/` or

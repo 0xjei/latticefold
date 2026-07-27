@@ -138,10 +138,11 @@ aggregation is by LatticeFold folding.
    (manageable: 17 GiB at H=51) but a streaming fold-consume design makes it ~constant.
 7. **SECURITY.md m-width re-estimation** — the binding analysis used pre-decomposition module
    widths; re-run the estimator with the deployed widths (κ=4, m·d up to ~630k).
-8. **Housekeeping** — `dkg_wrapper_export.rs` (WIP) has a wrong-domain-tag CRS derivation (L1)
-   and a compile error; cleartext witness export in `decider-circuits/c5_8192/Prover.toml`;
+8. **Housekeeping** — `dkg_wrapper_export.rs` (WIP) has a wrong-domain-tag CRS derivation (L1);
    `circuits/lib` doesn't compile under nargo beta.22 (148 pre-existing errors, version skew);
    e_sm one-time-reuse guard absent; committee-demo hardcoded secrets are demo-only.
+   (Resolved since: the dead `c5_8192`/`c5_sz`/`c5_4096` circuit dirs — including the
+   cleartext witness export — were deleted in the fc5e5ab cleanup.)
 
 ---
 
@@ -241,7 +242,7 @@ recomputable commitments. Prover-side asserts are completeness guards only.
 | R3 unproven data plane | High | ✅ Fixed (this milestone) |
 | SECURITY.md module-width mismatch | Medium | ⬜ Open (§5.7) |
 | Fold verification off by default | Medium | 🟡 By design for demos (`DKG_VERIFY_FOLDS=1`) |
-| Lagrange index set not bound in-circuit; c5_8192 export WIP bugs; secret in Prover.toml; panic surface | Low | ⬜ Open (§5.8) |
+| Lagrange index set not bound in-circuit; panic surface | Low | ⬜ Open (§5.8) |
 
 Positive confirmations from the review: N8192/N4096 parameters all verify exactly; batched-RS R2
 is one ring equation/row; R4 aggregation is genuinely circuit-free; the core folding verifier was

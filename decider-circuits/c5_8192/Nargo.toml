@@ -1,7 +1,0 @@
-[package]
-name = "c5_8192"
-type = "bin"
-compiler_version = ">=1.0.0"
-
-[dependencies]
-modulo = { path = "../modulo" }
