@@ -188,9 +188,9 @@ Phase wall-times (overlapping — channels and share-kinds run concurrently):
 | --- | --- |
 | R3 benchmark, degree N=8192 (`dkg_fhe_r3`) | 50 instances proven + folded into 1 accumulator/prime in 756 s ≈ **15 s/instance** |
 | Noir C3 baseline (same relation, degree 8192) | 3.48M constraints, 10.76 s isolated prove × 432 proofs/round **plus** recursive aggregation |
-| Decider wrapper `ajtai_opening_sz` (N=8192) | 3.03M opcodes / 5.12M gates; ~12.3 s prove (measured pre-soundness-fix; +2–8% after) |
-| Decider wrapper `c5_sz` (3 tracks, N=1024) | 1.28M opcodes / 2.14M gates |
-| Decider wrapper `c7` (N=1024) | 303k opcodes / 748k gates (post-fix); **2.7 s prove; verifies in bb** |
+| Decider wrapper `ajtai_opening_sz` (per-track, ProdParams channel, N=16384) | **6.05M opcodes / 10.2M gates** (2× the N=8192 figure — linear scaling); the C5 aggregate = 4 of these + recursion |
+| Decider wrapper `c7` (4 channels, ProdParams, N=16384) | **5.06M opcodes / 12.5M gates; `bb prove`+`verify` pass** — runs once per threshold decryption |
+| Decider wrapper `c7` (3 channels, N=1024, superseded) | 303k opcodes / 748k gates; 2.7 s prove |
 | Full flow N=8192, H=5/T=3 (pre-R3-wiring) | ~316 s |
 | Full flow N=8192, H=3/T=2 with limb-heavy R7 | ~22 min |
 
