@@ -26,6 +26,8 @@ pub enum SumCheckError<R: Ring + Display> {
     SumCheckFailed(R, R),
     #[error("max degree exceeded")]
     MaxDegreeExceeded,
+    #[error("malformed sumcheck proof")]
+    MalformedProof,
 }
 
 impl<R: Ring> From<ArithErrors> for SumCheckError<R> {
@@ -88,6 +90,19 @@ impl<R: OverField, T: Transcript<R>> MLSumcheck<R, T> {
         claimed_sum: R,
         proof: &Proof<R>,
     ) -> Result<SubClaim<R>, SumCheckError<R>> {
+        // Check the complete proof shape before indexing it. Proofs are
+        // normally received from an untrusted prover, so malformed lengths
+        // must be rejected rather than reaching the panic paths in the
+        // interactive verifier.
+        if proof.0.len() != nvars
+            || proof
+                .0
+                .iter()
+                .any(|message| message.evaluations.len() != degree + 1)
+        {
+            return Err(SumCheckError::MalformedProof);
+        }
+
         transcript.absorb(&R::from(nvars as u128));
         transcript.absorb(&R::from(degree as u128));
 
@@ -106,6 +121,7 @@ impl<R: OverField, T: Transcript<R>> MLSumcheck<R, T> {
 
 #[cfg(test)]
 mod tests {
+    use ark_ff::Zero;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
     use ark_std::io::Cursor;
     use cyclotomic_rings::{challenge_set::LatticefoldChallengeSet, rings::SuitableRing};
@@ -116,7 +132,7 @@ mod tests {
         transcript::poseidon::PoseidonTranscript,
         utils::sumcheck::{
             utils::{rand_poly, rand_poly_comb_fn},
-            MLSumcheck, Proof,
+            MLSumcheck, Proof, SumCheckError,
         },
     };
 
@@ -221,6 +237,22 @@ mod tests {
             );
             assert!(res.is_err());
         }
+    }
+
+    #[test]
+    fn malformed_sumcheck_proof_is_rejected_without_panicking() {
+        use cyclotomic_rings::rings::{GoldilocksChallengeSet, GoldilocksRingNTT};
+
+        let mut transcript =
+            PoseidonTranscript::<GoldilocksRingNTT, GoldilocksChallengeSet>::default();
+        let result = MLSumcheck::verify_as_subprotocol(
+            &mut transcript,
+            1,
+            2,
+            GoldilocksRingNTT::zero(),
+            &Proof(Vec::new()),
+        );
+        assert!(matches!(result, Err(SumCheckError::MalformedProof)));
     }
 
     mod stark {

@@ -15,12 +15,20 @@ use stark_rings::{
 mod babybear;
 mod frog;
 mod goldilocks;
+mod interfold;
+mod n4096;
+mod n8192;
+mod n16384;
 mod poseidon;
 mod stark;
 
 pub use babybear::*;
 pub use frog::*;
 pub use goldilocks::*;
+pub use interfold::*;
+pub use n4096::*;
+pub use n8192::*;
+pub use n16384::*;
 pub use stark::*;
 
 /// An umbrella trait of a ring suitable to be used in the LatticeFold protocol.

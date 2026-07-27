@@ -10,6 +10,7 @@ use ark_std::{cfg_iter, iter::successors, iterable::Iterable};
 use cyclotomic_rings::rings::SuitableRing;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use stark_rings::PolyRing;
 use stark_rings_poly::mle::DenseMultilinearExtension;
 
 use self::utils::*;
@@ -140,6 +141,23 @@ impl<NTT: SuitableRing, T: TranscriptWithShortChallenges<NTT>> FoldingVerifier<N
         ccs: &CCS<NTT>,
     ) -> Result<LCCCS<NTT>, FoldingError<NTT>> {
         sanity_check::<NTT, P>(ccs)?;
+
+        let expected_v_len = NTT::CoefficientRepresentation::dimension() / NTT::dimension();
+        if cm_i_s.len() != 2 * P::K
+            || proof.theta_s.len() != 2 * P::K
+            || proof.eta_s.len() != 2 * P::K
+            || cm_i_s.iter().any(|cm| {
+                cm.r.len() != ccs.s || cm.v.len() != expected_v_len || cm.u.len() != ccs.t
+            })
+            || cm_i_s.iter().any(|cm| cm.cm.len() != cm_i_s[0].cm.len())
+            || proof
+                .theta_s
+                .iter()
+                .any(|theta| theta.len() != expected_v_len)
+            || proof.eta_s.iter().any(|eta| eta.len() != ccs.t)
+        {
+            return Err(FoldingError::IncorrectLength);
+        }
 
         // Step 1: Generate alpha, zeta, mu, beta challenges and validate input
         let (alpha_s, beta_s, zeta_s, mu_s) = transcript.squeeze_alpha_beta_zeta_mu::<P>(ccs.s);

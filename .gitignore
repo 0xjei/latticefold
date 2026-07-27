@@ -1,3 +1,15 @@
 /target
 /.vscode
 *.sage.py
+.DS_Store
+
+# Python venv for the lattice estimator
+estimators/venv/
+
+# Noir build artifacts (sources + Prover.toml are tracked)
+decider-circuits/**/target/
+
+# WIP C5 exports: contain secret witness material (aggregate sk) — never commit
+decider-circuits/c5_8192/Prover.toml
+decider-circuits/c5_4096/Prover.toml
+decider-circuits/c5_prod/Prover.toml
