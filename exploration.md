@@ -1,5 +1,14 @@
 # LatticeFold VDKG Exploration
 
+> **⚠️ HISTORICAL JOURNAL — READ [`report.md`](report.md) FIRST.**
+> This file is the exploration log as written along the way (up to ~2026-07-24):
+> it documents the journey, the Interfold C0–C7 mapping rationale, and early
+> parameter candidates, but its status claims are **stale** (it predates the
+> integrated P1→P4 flow, proven R3 transport, binary fold trees, the N=100
+> e2e benchmark, and the 4-channel Demo/Prod parameter family).
+> **`report.md` is the single source of truth** for current status, gaps,
+> benchmarks, and reproduction. This file is kept for narrative context only.
+
 ## TL;DR
 
 This repository explores a native-ring implementation of the Interfold-style

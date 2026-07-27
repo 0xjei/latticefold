@@ -13,10 +13,11 @@ committee end-to-end.
 **Answer:** yes, at measurement scale. The complete P1→P4 protocol — distributed key generation
 (R1–R4), threshold public-key aggregation (R5), user encryption (Ruser), and threshold decryption
 (R6 + R7/P) — runs green with proofs at every step for a **N=100 / H=51 / T=27** committee at ring
-degree N=4096 in **5.2 hours wall-clock** (63 CPU-hours) on a 14-core Apple-silicon laptop, peak
-memory **17 GiB**, recovering the exact 4096-coefficient plaintext. Nothing in the measured cost
-structure grows superlinearly with committee size. At production degree N=8192 the same run is
-estimated at ~2× (≈10–12h on the same machine, ≈5h on a 28-core box).
+degree 4096 (3 channels at the time; now the 4-channel `DemoParams`) in **5.2 hours wall-clock**
+(63 CPU-hours) on a 14-core Apple-silicon laptop, peak memory **17 GiB**, recovering the exact
+4096-coefficient plaintext. Nothing in the measured cost structure grows superlinearly with
+committee size. At production degree 16384 (`ProdParams`) the same run is estimated at ~4×
+per-instance cost.
 
 **Plan validation:** every relation in plan.md §5 exists, runs, and is exercised in one integrated
 flow. The plan's central claims are confirmed in code: RNS-native arithmetic with zero quotient
@@ -49,8 +50,8 @@ aggregation is by LatticeFold folding.
 
 | Plan step | Status | Notes |
 | --- | --- | --- |
-| 1. Parameter set + congruence checks | ✅ Done | N8192/N4096 chains machine-checked (primality, NTT, LF congruence, margins). Odd-`t` obstruction found; `t = 2^20`. R7 margin now **derived**, old N8192 P provably insufficient → replaced with verified 177-bit P. |
-| 2. Custom `Ring` types | ✅ Done | `stark-rings` fork (`0xjei/stark-rings#interfold`): N8192 (3×Fp64 + Fp192 P), N4096, Interfold 51-bit model; NTT kernels verified vs schoolbook. |
+| 1. Parameter set + congruence checks | ✅ Done | One 4-channel family: **DemoParams** (d=4096, 4×34-bit, benchmark-only) and **ProdParams** (d=16384, 4×61-bit, Q=2^244, t=2^20, 251-bit P — matches the fhe.rs lbfv-mul example's size class). All properties machine-checked (`validate_demo`/`validate_prod`). |
+| 2. Custom `Ring` types | ✅ Done | `stark-rings` fork (`0xjei/stark-rings#interfold`): n16384 (4×Fp64 + Fp256 P), n4096 (4 channels + Fp192 P); NTT kernels verified vs schoolbook. |
 | 3. R1 + R4 vertical slice | ✅ Done | In slices and in the integrated flow. |
 | 4. R2 batched RS + digit decomposition | ✅ Done | GRS parity as one ring equation/row; digit-decomposed shares. |
 | 5. R3 + Ruser + folding benchmark | 🟡 Mostly | **R3 now wired into the full flow** (this milestone): real fhe.rs extended encryption, per-digit proofs, folded per transport prime. Ruser per-channel done; **cross-channel `Com(m)` still missing**. Folding-vs-baseline benchmark exists (`dkg_bench_folding`). |
@@ -63,8 +64,9 @@ aggregation is by LatticeFold folding.
 ## 4. What exists and is verified
 
 ### Protocol flow (`vdkg_flow.rs`, `fhe_bridge.rs`, `r3_bridge.rs`)
-- **Full P1→P4 integrated flow** on native rings, generic over `N4096Params`/`N8192Params`, with
-  production fhe.rs TRBFV witness distributions (ternary sk, CBD errors, λ=50 smudging).
+- **Full P1→P4 integrated flow** on native rings, generic over `DemoParams`/`ProdParams`
+  (four RNS channels), with production fhe.rs TRBFV witness distributions (ternary sk, CBD
+  errors, λ=50 smudging).
 - **R3 wired in** (this milestone): shares move as their base-B digits — the same digits the R2
   commitments bind — encrypted with fhe.rs `try_encrypt_extended` (full `(u,e1,e2)` witness),
   proven natively per transport prime (`ct0 = pk0·u + e1 + δ·digit`, `ct1 = pk1·u + e2`), folded
@@ -139,10 +141,10 @@ aggregation is by LatticeFold folding.
 7. **SECURITY.md m-width re-estimation** — the binding analysis used pre-decomposition module
    widths; re-run the estimator with the deployed widths (κ=4, m·d up to ~630k).
 8. **Housekeeping** — `dkg_wrapper_export.rs` (WIP) has a wrong-domain-tag CRS derivation (L1);
-   `circuits/lib` doesn't compile under nargo beta.22 (148 pre-existing errors, version skew);
    e_sm one-time-reuse guard absent; committee-demo hardcoded secrets are demo-only.
-   (Resolved since: the dead `c5_8192`/`c5_sz`/`c5_4096` circuit dirs — including the
-   cleartext witness export — were deleted in the fc5e5ab cleanup.)
+   (Resolved since: dead circuit dirs incl. the cleartext witness export were deleted;
+   `circuits/`, `fhe-params/`, `notebooks/` were removed — canonical copies live on the
+   interfold repo; `analysis/` renamed `estimators/`.)
 
 ---
 
@@ -261,14 +263,17 @@ rustup install nightly-2025-03-06 1.91.1
 cargo test -p latticefold
 cargo +1.91.1 test --release --features fhe-bridge -p latticefold --lib
 
-# The headline N=100 run (~5.2h on 14 cores; N=4096 default):
+# The headline N=100 run (~5.2h on 14 cores; 3-channel d=4096 at the time):
 DKG_PHASE_TIMING=1 cargo +1.91.1 run --release --example dkg_fhe_full_flow \
   --features fhe-bridge,parallel -- --n 100 --h 51 --t 27 --recipient 3 --session 100
 
-# Smaller configs / N=8192:
-cargo +1.91.1 run --release --example dkg_fhe_full_flow --features fhe-bridge,parallel
+# Production parameter set (d=16384, 4 channels) — the remaining e2e run:
+DKG_PHASE_TIMING=1 cargo +1.91.1 run --release --example dkg_fhe_full_flow \
+  --features fhe-bridge,parallel -- --params prod --n 5 --h 5 --t 3 --recipient 3
+
+# Demo set (d=4096, 4 channels, fast):
 cargo +1.91.1 run --release --example dkg_fhe_full_flow --features fhe-bridge,parallel \
-  -- --params n8192 --n 5 --h 5 --t 3 --recipient 3
+  -- --params demo --n 5 --h 5 --t 3 --recipient 3
 
 # Per-node fold verification (≈2× fold cost):
 DKG_VERIFY_FOLDS=1 DKG_PHASE_TIMING=1 cargo +1.91.1 run --release \
@@ -295,7 +300,7 @@ cd ../c7 && nargo execute && bb prove -b target/c7.json -w target/c7.gz -o targe
 | `crates/latticefold/src/r3_bridge.rs` | R3 relation, fhe.rs extended-encryption transport, per-tag folding |
 | `crates/latticefold/src/nifs/tree.rs` | **Binary fold trees** (`fold_tree`) |
 | `crates/latticefold/src/nifs.rs` | NIFS core + **`prove_acc`/`verify_acc`** (acc+acc folding) |
-| `crates/latticefold/src/vdkg_params.rs` | N4096/N8192 parameter sets + validators (new 177-bit P) |
+| `crates/latticefold/src/vdkg_params.rs` | `DemoParams` + `ProdParams` (4 channels) + validators |
 | `crates/latticefold/src/samples.rs` | Production fhe.rs/TRBFV witness sampling |
 | `crates/latticefold/examples/interfold/` | Relation slices R0–R7, chains, benchmarks (see `DKG_SLICES.md`) |
 | `decider-circuits/` | Noir decider-wrapper measurement circuits + SPEC.md |
