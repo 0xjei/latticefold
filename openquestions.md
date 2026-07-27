@@ -178,6 +178,87 @@ technique (plan §8.1) is required — real new ring machinery.
 
 ---
 
+## Q11. Witness ownership in folding — the single-knower principle (from review.md #3)
+
+**Context.** Folding is single-knower: the folder must hold every witness it folds.
+Our single-process demo folds cross-party only because one process holds all
+secrets. In deployment: a dealer folds its own R2/R3 (fine — its own secrets); a
+recipient folds its own R4 (fine). But (a) R6's fold spans T parties' shares, and
+(b) any acc+acc merge across parties hands the merger a witness that fully
+determines a linear combination of *other parties'* secrets (lattice-hint attack
+surface). Note this also constrains the distributed-fold-tree picture: subtrees
+must respect knower sets, and coordinator merges need their own argument.
+
+**Options:** (a) adopt the explicit principle **fold only within single-knower
+sets** (R1/R6 decided per party or per small group; R2/R3 per dealer; R4 per
+recipient) and re-derive wrapper cost from that taxonomy; (b) specify a
+distributed-folding/MPC protocol for cross-party merges (real research work).
+
+**Recommendation:** (a) — it's what the implementation already implicitly does
+for R3/R4; write it into plan §4.1/§7 and the deployment docs. Decide who (if
+anyone) merges cross-party accumulators, or structure tracks so no such merge
+is needed.
+
+---
+
+## Q12. Zero-knowledge is unspecified (from review.md #4)
+
+**Context.** The plan says only R7 needs no ZK, but never says how ZK is achieved
+anywhere else. Folding transcripts carry unmasked, witness-derived sumcheck
+messages (not ZK by default); §10's "send the final folded witness in the clear"
+decider option is a direct secret leak for R1/R2/R3/R4/R6 and must be ruled out
+for those tracks; and the hiding-commitment hedge in §2.2 needs a per-relation
+decision (hiding commitments also break §4.3's local-recompute check unless the
+randomness is broadcast with the value).
+
+**Options:** (a) accept "proofs of knowledge, not ZK proofs" for DKG traffic
+(witnesses stay with their owners; only commitments/accumulators are public) and
+mark exactly which artifacts are published; (b) add masking/ZK machinery where
+published artifacts leak.
+
+**Recommendation:** (a) is likely sufficient given the publication model
+(commitments + decided digests only) — but it must be *stated* per relation,
+with the clear-witness decider option explicitly forbidden for secret tracks.
+
+---
+
+## Q13. Smudging lifecycle / multi-decryption epochs (from review.md #1+#2; supersedes Q8)
+
+**Context.** The design works because everything hit by a full-range Lagrange
+coefficient is an *exact* Shamir share — sk and e_sm shares reconstruct exactly,
+while the ciphertext's own noise carries Σλᵢ = 1. Consequence: **fresh smudging
+cannot be added at R6** (a per-party fresh e_smᵢ gets multiplied by a full-range
+λᵢ and blows the decode window) — smudging must be DKG-shared, and each
+`(sk_share, e_sm_share)` pair is **one-time use**. A second decryption reusing
+them gives public share recovery (`d_i − d_i' = Δct₀ + Δct₁·sk_share`).
+
+**Options:** (a) document "one decryption per DKG instance" (status quo, nothing
+enforces it); (b) provision K smudging sharings at DKG (K decryptions per
+instance); (c) a per-request e_sm-only sharing round, with request/epoch IDs
+bound into R6 instances so reuse is provably impossible.
+
+**Recommendation:** document the invariant in plan §5-R6/R7 now (it's the
+foundation of the whole decryption design), and pick (b) or (c) for any
+multi-decryption deployment.
+
+---
+
+## Q14. Threat-model section for plan.md (from review.md #6)
+
+**Context.** The plan has no security section: corruption thresholds (T vs n/H);
+rushing-adversary and rogue-key analysis (R1's proof of knowledge is the
+mitigation — say so); discard/attribution rules (who is blamed when R4 fails,
+given R0 proves no key well-formedness); transcript/domain binding as an explicit
+requirement (its absence was a HIGH-severity finding in the code review);
+CRS genesis (who samples `a`, the `A_l`, outer keys — need nothing-up-my-sleeve
+derivation, else binding is vacuous; the implementation uses domain-separated
+Poseidon-squeezed `from_domain`, which answers this — write it down).
+
+**Recommendation:** add the section; most answers already exist in the
+implementation and just need to be stated.
+
+---
+
 ### Already decided / closed (for the record)
 
 - Extraction slack: **derived** (S=2 decide-directly; folding R7 shown infeasible

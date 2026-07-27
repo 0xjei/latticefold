@@ -1,5 +1,15 @@
 # Design Document
 
+> **Amendments (2026-07-27, implementation-driven)** — sections modified:
+> **§3** (§9.2 wide smudging marked solved), **§5-R3** (digit-form share transport
+> replaces full-share; fhe.rs 2⁶² limit), **§5-Ruser** (m range resolved for t=2²⁰),
+> **§5-R6** (exact-reconstruction invariant + one-time smudging note added),
+> **§5-R7.4** (centered decode form), **§7** (fold-tree + real track taxonomy,
+> fixes the dangling §4.4 reference), **§8.1** (odd-t obstruction + t=2²⁰ resolution),
+> **§9.2** (resolved via limbs), **§9.3** (margin derived: S=2, decide-directly),
+> **§12** (rescoped to remaining work), plus typo fixes. Open design questions live
+> in `openquestions.md`; status/benchmarks in `report.md` / `benchmarks.md`.
+
 ## Lattice-Based Verifiable DKG, User Encryption, and Threshold Decryption for RNS-BFV using LatticeFold / LatticeFold+ and Ajtai Commitments
 
 **Status:** Design proposal
@@ -58,8 +68,8 @@ The protocol is organized into four phases, following our current design: **P1**
 **Non-goals**
 
 - Relinearization key generation (but just postponed for now, should be doable as well)
-- FHE evaluation correctness (which is not handeled as well in our current design with Noir).
-- Handling smudging noise wider than a single native modulus (§9.2).
+- FHE evaluation correctness (which is not handled as well in our current design with Noir).
+- ~~Handling smudging noise wider than a single native modulus (§9.2)~~ — **solved**: the wide smudging noise is committed as balanced base-$b$ limbs (the §9.1 machinery applied to the noise itself) and shared as per-channel residues (§9.2).
 
 ---
 
@@ -131,13 +141,15 @@ Output: $\mathrm{Com}_l(\text{digits of }Y_l[k])$ per recipient $k$.
 
 ### R3 — Encrypting a Share Under the Recipient's Individual Key
 
-Witness: encryption randomness $u^{ind}$, errors $e_0^{ind},e_1^{ind}$ (short, no decomposition), and the already-short share digits from R2. Public: recipient's $(pk_0^{ind},pk_1^{ind})$, pinned to R0, and $\Delta_l$ (This assumes the plaintext space of the second instance of BFV, namely the one used for PVSS (i.e. the individual keys) is larger than the largest qi). Constraint:
+Witness: encryption randomness $u^{ind}$, errors $e_0^{ind},e_1^{ind}$ (short, no decomposition), and the already-short share digits from R2. Public: recipient's $(pk_0^{ind},pk_1^{ind})$, pinned to R0, and $\Delta$ of the share-transport instance. Constraint (per transport prime $p_j$, per digit):
 
 $$
-ct_0=pk_0^{ind}\cdot u^{ind}+e_0^{ind}+\Delta_l\cdot(\text{recomposed share}),\qquad ct_1=pk_1^{ind}\cdot u^{ind}+e_1^{ind},
+ct_0=pk_0^{ind}\cdot u^{ind}+e_0^{ind}+\Delta\cdot(\text{share digit}),\qquad ct_1=pk_1^{ind}\cdot u^{ind}+e_1^{ind},
 $$
 
-entirely affine (public $pk_0^{ind},pk_1^{ind},\Delta_l$ times secret witnesses, plus a linear recompose of already-short digits). Norm checks on $u,e_0,e_1$ only; share-digit shortness is inherited from R2 via commitment binding. Run $|A|\times(|A|-1)$ times per channel per share type — the axis where high-arity folding gives the largest gain over recursive-proof aggregation.
+entirely affine (public $pk_0^{ind},pk_1^{ind},\Delta$ times secret witnesses). Norm checks on $u,e_0,e_1$ only; share-digit shortness is inherited from R2 via commitment binding. Run $|A|\times(|A|-1)$ times per channel per share type — the axis where high-arity folding gives the largest gain over recursive-proof aggregation.
+
+**Transport form (resolved, supersedes the original full-share formulation).** The original formulation — one plaintext per recomposed share with $t_{ind} > \max q_i$ — requires the share-transport chain to satisfy the LatticeFold congruence for $t_{ind} = 2^{61}$, i.e. transport primes $\equiv 1+2^{62} \pmod{2^{63}}$ (63-bit), which exceeds `fhe.rs`'s $2^{62}$ modulus limit. The implementation therefore transports the share **as its R2-committed digits**: each share moves as $L$ digit-ciphertexts on a dedicated two-prime chain with $t_{share} = 2^{16} > b$ (62-bit primes, $q \equiv 1+2^{17} \pmod{2^{18}}$, NTT- and LF-compatible), one instance per (sender, recipient, share-kind, digit, transport prime). This removes the $t_{ind} > \max q_i$ assumption entirely; full-share transport remains available only if the $2^{62}$ library limit is ever lifted (63-bit transport chain).
 
 ### R4 — Share Receipt and Aggregation
 
@@ -161,7 +173,7 @@ $$
 
 again fully affine in the witness. Two points specific to this relation:
 
-- **Range on $m$:** $m$ must lie in the valid plaintext range; whether this requires digit decomposition or falls within a native "short" bound depends on how $t$ compares to the chosen Ajtai norm bound — a parameter-dependent choice, resolved the same way share decomposition is (§6). Either way, the check itself uses LatticeFold's/LatticeFold+'s native range-proof machinery, not a foreign-field bit-decomposition.
+- **Range on $m$:** resolved for $t = 2^{20}$: $m$ is digit-decomposed like a share (two base-$2^{15}$ limbs per coefficient, since $2^{20}$ exceeds the native digit bound $b = 2^{15}$) and range-checked with LatticeFold's/LatticeFold+'s native machinery, not a foreign-field bit-decomposition.
 - **Cross-channel consistency of $m$:** unlike DKG values (which are honestly generated once by `fhe.rs` and simply represented per channel), a user is untrusted and could attempt to encrypt inconsistent messages across channels to corrupt the downstream FHE computation. This is prevented by committing to $m$ (or its digits) once, in a dedicated message commitment, and having each of the $L$ per-channel Ruser instances prove its own use of $m$ is an opening of that same commitment — reusing the same commit-once/reference-many-times pattern already used for $sk_i$.
 
 ### R6 — Decryption-Share Computation
@@ -175,6 +187,8 @@ d_i=ct_0+ct_1\cdot(\text{recomposed }sk_i^{share})+(\text{recomposed }e_{sm,i}^{
 $$
 
 $ct_1$ is a public, full-range ring element multiplying a linear combination of short secret digits — still affine overall. $d_i$ requires no norm bound and no fresh commitment: it is simply the public output of a linear map applied to an already-committed short-digit witness, broadcast in the clear once computed (the smudging noise ensures this reveals nothing about the underlying share). Norm checks on the digits are inherited from R2/R4, not repeated.
+
+**Exact-reconstruction invariant (foundation of the whole decryption design).** R7 multiplies decryption shares by full-range Lagrange coefficients $\lambda_i$, and decode still works because *everything hit by a $\lambda_i$ is an exact Shamir share*: both the $sk$ shares and the $e_{sm}$ shares reconstruct exactly ($\sum_i \lambda_i \cdot g(i) = g(0)$ with zero noise growth), while the only true noise (the ciphertext's own error) carries coefficient $\sum_i \lambda_i = 1$. Two sharp consequences: **fresh smudging noise cannot be added at R6** — a per-party fresh $e_{sm,i}$ would be multiplied by a full-range $\lambda_i$ and destroy the decode window, which is exactly why smudging must be DKG-shared — and each $(sk\_share, e\_sm\_share)$ pair is **one-time use** (two decryptions give $d_i - d_i' = \Delta ct_0 + \Delta ct_1 \cdot sk\_share_i$, public share recovery). Multi-decryption deployments need an epoch/request model (provisioned smudging stock or per-request sharings).
 
 ### R7 — Lagrange Interpolation, CRT Reconstruction, and Decoding
 
@@ -206,7 +220,7 @@ Whenever a commitment must appear on-chain, an outer Ajtai commitment (with a sm
 
 ## 7. Folding Strategy
 
-- $L$ independent per-channel tracks, each organized as a small-arity fold tree per §4.4, plus one reconstruction track over $P$.
+- $L$ independent per-channel tracks, each organized as a fold tree, plus one reconstruction track over $P$. (Implemented as binary acc+acc fold trees with per-node transcripts — `nifs/tree.rs`; this is also where goal 4's cheater isolation lives: an unsatisfiable instance fails its own fold step and is identified in O(1). The full track taxonomy is per (relation × channel × transport prime × share-kind × fold group), not just per channel — the wrapper combination job in §7.1/§10 should be read against that.)
 - Tracks cannot be merged into one another by LatticeFold itself, since each is defined over a different modulus; combining the $L+1$ tracks' final decided statements into a single artifact for on-chain submission is done by a separate proving backend at the final wrapping stage, described in §7.1 and deployed per §10, not by folding.
 
 ### 7.1 Combining the $L+1$ tracks at the end
@@ -227,7 +241,7 @@ This mechanism is proposed but not yet implemented or benchmarked. Its two open 
 
 ## 8. Parameter Selection
 
-1. **RNS primes $q_l$** must remain NTT-friendly (required by `fhe.rs`) and separately satisfy LatticeFold's $q_l\equiv 1+2t\pmod{4t}$ congruence; this is a joint constraint that must be checked per candidate BFV parameter set, with LatticeFold's small-modulus extension-field technique available as a fallback if a chosen $q_l$ does not naturally satisfy it.
+1. **RNS primes $q_l$** must remain NTT-friendly (required by `fhe.rs`) and separately satisfy LatticeFold's $q_l\equiv 1+2t\pmod{4t}$ congruence. (The $t$ in LatticeFold's congruence is identified with BFV's plaintext modulus in this design — the symbols collide deliberately.) This is not merely a check: for any **odd** $t$ the two conditions are *structurally incompatible* ($1+2t \equiv 3 \pmod 4$ contradicts NTT's $q \equiv 1 \pmod 4$), and for even non-power-of-two $t$ the two-adicity accounting rules out most candidates. The resolution used here is a **power-of-two $t \ge N$** (we use $t = 2^{20}$): then $q \equiv 1+2t \pmod{4t}$ subsumes the NTT condition, and a concrete four-channel chain exists at both parameter sets (Demo: d=4096, 4×34-bit; Prod: d=16384, 4×61-bit). LatticeFold's small-modulus extension-field technique remains the fallback if an odd $t$ is ever mandated.
 2. **Reconstruction prime $P$**, prime, $P>Q$ with the explicit margin of §5 (R7) and §9.3, subject to the same congruence requirement.
 3. **Ajtai commitment parameters** $(\kappa,m,B)$, chosen via standard lattice-estimator methodology, separately for natively-short witnesses and for digit-decomposed full-range values (shares, and their downstream reuses).
 4. **Digit-decomposition base $b$**, balancing witness blow-up against per-digit range-proof cost.
@@ -243,11 +257,13 @@ The values requiring decomposition before commitment are Shamir shares (of secre
 
 ### 9.2 Smudging noise wider than one native prime
 
-Out of scope for this version, under the assumption that the statistical security parameter keeps the smudging-noise contribution (and its shares) within its native channel throughout. If this needs relaxing, available mitigations are LatticeFold's extension-field technique, splitting the noise into multiple independently-committed bounded limbs (the same decomposition machinery already used for shares, applied to the noise itself), or a dedicated wider prime channel for smudging noise alone.
+**Resolved** by splitting the noise into independently-committed bounded limbs (the same decomposition machinery used for shares, applied to the noise itself): the wide smudging contribution is committed in R1 as balanced base-$b$ limbs and shared in R2 as per-channel residues. If a future parameter set needs more, the remaining mitigations are LatticeFold's extension-field technique or a dedicated wider prime channel for smudging noise alone.
+
+One lifecycle constraint this creates: since smudging shares are committed at DKG and consumed at R6, each $(sk\_share, e\_sm\_share)$ pair is one-time use — see the exact-reconstruction note in R6.
 
 ### 9.3 No-wraparound margin in R7
 
-The choice of $P$ must be justified with an explicit norm-accounting derivation covering the largest $r^{(l)}\cdot q_l$ cross term and LatticeFold's own extraction slack, computed during parameter selection rather than assumed.
+**Derived** (no longer assumed): the extraction slack is $S = 2$ for decide-directly proofs (the extracted opening is at most twice the honest digit bound), and the margin rule is the per-term invariant $S \cdot C_q \cdot q_l < P/2$, where $C_q$ is the balanced capacity of the tight quotient decomposition. At the byte challenge sets in use, the fold-path slack ($\sim 2^{13}$–$2^{14}$) would breach the decode $\Delta$-window, so **the P track always decides directly and never folds** — the general policy being that any track whose extraction slack breaches its norm envelope must decide directly rather than fold. The derivation is machine-checked per parameter set (`vdkg_params::r7_margin_holds`): current sets satisfy it with factors to spare (ProdParams: $P \approx 4.5Q$, 251-bit, safe form).
 
 ---
 
@@ -281,13 +297,13 @@ The choice of $P$ must be justified with an explicit norm-accounting derivation 
 
 ---
 
-## 12. Suggested Implementation Plan
+## 12. Implementation Plan — status
 
-1. Fix a concrete `fhe.rs` BFV parameter set and check congruence compatibility of every $q_l$ and of $P$ with LatticeFold's requirements.
-2. Implement the required custom `Ring` types for each $q_l$ and for $P$.
-3. Implement R1 and R4 first (both map directly onto LatticeFold's existing commitment-opening relation) as a vertical slice.
-4. Implement R2 with batched Reed–Solomon and digit decomposition; validate interoperation with R1/R4's commitments.
-5. Implement R3 and Ruser, and benchmark high-arity folding across the pairwise/many-submitter instance sets against a recursive-proof-aggregation baseline.
-6. Implement R5, R6, and R7 (the latter on its dedicated $P$track), with an explicit derivation and test of the no-wraparound margin.
-7. Prototype the on-chain wrapper against a testnet deployment for both the Noir/Barretenberg and STARK options, measuring gas/calldata cost.
-8. Revisit the deferred wide-smudging-noise item (§9.2) if required by the target security parameters.
+Steps 1–6 and 8 of the original plan are complete (validated per `report.md` §3). What remains, in order:
+
+1. **Equality-of-openings links** — R1↔R2 secret anchor, R2→R4 share binding (opens the R2 commitment), Ruser's cross-channel `Com(m)` (with a cross-modulus mechanism — an Ajtai commitment is modulus-bound, so either a P-track commitment with per-channel quotient-witness links, or per-channel `Com_l(m)` plus a P-track equality proof), and the e_sm limb↔residue binding. All are native commitment-opening relations needing wiring, currently example-side assertions.
+2. **Full recipient fan-out** — R3/R4 currently transport and prove one recipient's shares; the full dealer→recipient matrix is the dominant benchmark axis.
+3. **Terminal decider** — an in-repo decider per track so norm bounds are terminally enforced and the flow ends in a verifiable artifact (per-track wrapper circuits exist and are measured: `decider-circuits/`).
+4. **R2 cost restructure** — R2's witness is O(N) in the committee size and is the measured bottleneck at N=100; restructure (e.g. commit to the T sharing coefficients) is an open design question (see `openquestions.md` Q2).
+5. **On-chain wrapper completion** — P-track wrapper circuit (limb arithmetic for the 251-bit P), combination of the tracks' decided statements (single circuit or recursion), §6.2 double-commitment digests as inputs, Solidity generation + gas measurement (§10).
+6. Revisit relinearization-key generation if the target deployment needs it.
