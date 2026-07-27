@@ -90,7 +90,7 @@ pub struct C5Export {
 }
 
 /// Run the R1 phase of the flow for the committee and export the C5 wrapper
-/// vectors for all three channels. `num_ciphertexts` is the smudging z.
+/// vectors for all four channels. `num_ciphertexts` is the smudging z.
 pub fn export_c5<P, F>(
     samples: &[DealerSamples],
     config: &CommitteeConfig,
@@ -100,7 +100,7 @@ where
     P: VdkgParams,
     F: Fn(&[DealerSamples], &CommitteeConfig, usize) -> Result<C5TrackExport, Box<dyn Error>>,
 {
-    let tracks = (0..3)
+    let tracks = (0..4)
         .map(|channel| export_track(samples, config, channel))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(C5Export {

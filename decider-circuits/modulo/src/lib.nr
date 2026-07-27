@@ -27,14 +27,14 @@ impl ModU128 {
         ModU128 { m }
     }
 
-    /// n mod m in [0, m), fully constrained. Assumes m < 2^59 and n < m^2
+    /// n mod m in [0, m), fully constrained. Assumes m < 2^64 and n < m^2
     /// (i.e. all operands are canonical, previously reduced values), so the
     /// in-circuit product/sum `n` equals the integer one (no wrap mod p).
     pub fn reduce_mod(self, n: Field) -> Field {
         let (q, r) = unsafe { __compute_mod_reduction(n, self.m) };
-        // Enforce r < m canonically (m < 2^59): if r >= m, m-1-r wraps to a
+        // Enforce r < m canonically (m < 2^64): if r >= m, m-1-r wraps to a
         // huge value and the bit-size check fails.
-        (self.m - 1 - r).assert_max_bit_size::<59>();
+        (self.m - 1 - r).assert_max_bit_size::<64>();
         // Bound the quotient. Honest calls have n < m^2, hence q = n/m < m
         // < 2^59 < 2^70. With q < 2^70 and m < 2^59, q*m + r < 2^130 << p
         // (BN254, ~2^254), so the equality below holds over the INTEGERS and

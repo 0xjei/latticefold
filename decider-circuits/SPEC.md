@@ -5,8 +5,11 @@ decider statements** of the LatticeFold tracks — never the folding
 transcripts (those verify natively). The decider relation has an identical
 shape across tracks (commitment opening + norm bound + evaluation
 consistency), differing only in the modulus. Everything here runs over the
-N=8192 parameter set of `crates/latticefold/src/vdkg_params.rs` (three
-58-bit RNS primes; 176-bit P for the reconstruction track).
+parameter family of `crates/latticefold/src/vdkg_params.rs`. As of commit
+fc5e5ab the family is: **DemoParams** (d=4096, four 34-bit channels,
+140-bit P — benchmark-only) and **ProdParams** (d=16384, four 61-bit
+channels, Q ~ 2^244, t = 2^20, 251-bit safe-form P — production). The old
+N8192 set (3 x 58-bit, 176-bit P) no longer exists.
 
 ## The Schwartz–Zippel design (final, after the compile-time investigation)
 
@@ -181,3 +184,20 @@ Remaining known gaps (documented cost deltas, not yet implemented):
    commitments and shares now public, the verifier/contract must source
    them from the real CRS digests and broadcast values, not from the
    prover's supplied proof bundle.
+
+## Parameter-family update (fc5e5ab, 2026-07-27) — current circuit status
+
+| Circuit | Status |
+| --- | --- |
+| `ajtai_opening_sz/` | **CURRENT** — per-track decider at the ProdParams channel 0 (61-bit, N=16384). Measured: **6.05M opcodes / 10.2M gates** (2x the N=8192 figure, linear), witness solved. This is THE per-track decider number for production: the C5 aggregate = 4 of these (one per channel) + the recursion/split below. |
+| `c7/` | **CURRENT** — 4-channel final-decryption wrapper at ProdParams constants (Q ~ 2^244, Delta ~ 2^224), N=16384: **5.06M opcodes / 12.5M gates**, `bb prove`+`verify` pass (UltraHonk, keccak). Decode is the two-branch centered form (positive noise or u + Q); unique decode except the measure-zero boundary. Runs **once per threshold decryption**. |
+| `c5_prod/` | **Vectors ready** (real 4-track export from `dkg_wrapper_export --params prod`); the 4-track circuit itself is NOT written — the per-track + recursion path is now mandatory (4 x 6.05M opcodes in one circuit is not practical). |
+| `c5_8192/` | **DEAD** — built over the dropped N8192 chain (moduli no longer exist). Kept for reference only. |
+| `c5_sz/` | **STALE** — 3-track SZ prototype over the old 58-bit moduli at N=1024. |
+| `c5_4096/` | **DEAD skeleton** — no main circuit; its 3 old demo primes survive in DemoParams but the 4th track is missing. |
+| `modulo/` | Fine — parameter-agnostic (now supports moduli up to 2^64). |
+
+Export side: `wrapper_export::export_c5` now iterates all FOUR channels and
+`dkg_wrapper_export` takes `--params demo|prod` (writes `c5_demo/` or
+`c5_prod/` vectors incl. per-channel Ajtai CRS constants from the real
+domain-separated schemes).
