@@ -49,7 +49,7 @@ pub const DEMO_RECONSTRUCTION_MODULUS: &str =
 // extracted folded witness is a challenge-linear-combination of honest
 // witnesses bounded by S_fold = 2*(1 + (2K'-1)*c_max). For the byte sets with
 // K' = 13..17 this is ~2^13.6-13.9, EXCEEDING the <= 2^10 slack envelope
-// assumed in analysis/SECURITY.md (the envelope holds only for
+// assumed in estimators/SECURITY.md (the envelope holds only for
 // decide-directly proofs such as R7's: 2 <= 2^10). It would also empty the
 // decode row's Delta-window below (the enforced noise bound S_fold * C_e
 // would exceed Delta - E_true). Folding R7 instances is therefore infeasible

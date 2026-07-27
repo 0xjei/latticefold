@@ -92,7 +92,7 @@ aggregation is by LatticeFold folding.
 ### Parameters & analysis
 - `vdkg_params.rs`: machine-checked validators (`validate_n4096`, `validate_n8192`) run in CI via
   `cargo test`; explicit CRT-row and decode-row margin checks.
-- `analysis/SECURITY.md`: lattice-estimator certification — N8192 keys ≈159–161 bits PQ, N4096
+- `estimators/SECURITY.md`: lattice-estimator certification — N8192 keys ≈159–161 bits PQ, N4096
   ≈137–139 bits PQ. **Caveat:** its Ajtai module widths are ~L× too small vs the deployed
   digit-decomposed shapes, so "unconditionally binding" does not carry over; a re-estimation with
   correct `m` is owed (§5).
@@ -299,6 +299,5 @@ cd ../c7 && nargo execute && bb prove -b target/c7.json -w target/c7.gz -o targe
 | `crates/latticefold/src/samples.rs` | Production fhe.rs/TRBFV witness sampling |
 | `crates/latticefold/examples/interfold/` | Relation slices R0–R7, chains, benchmarks (see `DKG_SLICES.md`) |
 | `decider-circuits/` | Noir decider-wrapper measurement circuits + SPEC.md |
-| `analysis/` | Lattice-estimator certification + raw outputs |
-| `fhe-params/` | BFV parameter search (Noir baseline presets) |
+| `estimators/` | Lattice-estimator certification + raw outputs |
 | `dkg-fhe/` | Self-contained runner for the flow examples |

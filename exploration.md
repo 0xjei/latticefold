@@ -435,14 +435,14 @@ the aggregation boundaries where a self-contained ZK artifact is needed.
 | Full P1->P4 flow | `dkg_fhe_full_flow` green at N=3/H=3/T=2 and N=H=5/T=3: DKG -> R5 -> user encryption -> folded R6 -> P-track R7 CRT+decode recovers the exact plaintext | Complete for demonstration scale |
 | Production witness sampling | Real fhe.rs TRBFV distributions wired (`samples.rs`): ternary sk, CBD errors, lambda=50 TRBFV smudging (~2^74 at z=1) as R1 balanced limbs + per-channel residue sharing; centered signed decode in R7 | Complete |
 | Ajtai CRS | `AjtaiCommitmentScheme::from_domain` (Poseidon-squeezed, domain-separated per track) replaces per-run randomness | Complete |
-| Lattice-estimator certification | Done (`analysis/`): N=8192 BFV ~159-161 bits PQ, N=4096 ~137-139; commitments unconditionally binding at kappa=4; Eq4 formula cross-validated | Complete for these parameter sets |
+| Lattice-estimator certification | Done (`estimators/`): N=8192 BFV ~159-161 bits PQ, N=4096 ~137-139; commitments unconditionally binding at kappa=4; Eq4 formula cross-validated | Complete for these parameter sets |
 | C5 commitment-bound aggregate proof | R5 done natively (free homomorphic sum); ZK C5 decider-wrapper prototype in `decider-circuits/c5` (3-track openings + aggregation, 2.39M opcodes @ N=1024, proven+verified); production needs digit-limb witnesses, transcript-challenge binding, per-track recursion | Prototype done; production open |
 | C7 commitment-bound final decryption proof | R7 done natively on the P track (interpolation + CRT quotient witnesses + decode); ZK C7 spec'd in `decider-circuits/SPEC.md` | Spec done; wrapper open |
 | Real `fhe.rs` witness adapter | R2 polynomial share transport working behind `fhe-bridge` | Yes for production-oriented execution |
 | Production ring models for q0/q1/q2 and P | All four wired; P carries the native Garner recombination proof; R7 decode chain now complete | No for demonstrations |
 | N=4096 engineering candidate | Module and example validated | No, independent certification remains |
 | N=8192 parameter set (Noir `secure-8192` security) | Constants + validation in `vdkg_params.rs` (t=2^20, 3x58-bit, log2 Q=174, P 176-bit safe-form); stark-rings `models/n8192` wired on the fork (pushed); full flow green at N=8192 (H=5/T=3, ~316s) via `--params n8192`; estimator-certified ~159-161 bits PQ | No for demonstrations |
-| 128-bit post-quantum certification | Done for the N=8192 parameter set via lattice-estimator (`analysis/SECURITY.md`): ~159-161 bits PQ BFV, commitments binding | Complete for these sets (re-run if parameters change) |
+| 128-bit post-quantum certification | Done for the N=8192 parameter set via lattice-estimator (`estimators/SECURITY.md`): ~159-161 bits PQ BFV, commitments binding | Complete for these sets (re-run if parameters change) |
 | Noir C5/C7 circuits | Not in this repository | No for current examples, yes for ZK artifact |
 | On-chain wrapper | Out of scope | No |
 | FHE evaluation correctness | Out of scope in `plan.md` | No |

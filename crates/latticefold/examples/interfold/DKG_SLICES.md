@@ -242,13 +242,13 @@ equality-of-openings protocol is still required.
   production path (per-track circuits + recursion, §6.2 digests) are in
   `decider-circuits/SPEC.md`.
 
-- **Lattice-estimator certification** (`analysis/`) — the N=8192 set gives
+- **Lattice-estimator certification** (`estimators/`) — the N=8192 set gives
   **~159-161 bits PQ** for the BFV keys (MATZOV model, full attack suite;
   N=4096: ~137-139), the `fhe-params` Eq4 rule-of-thumb matched the raw
   estimator at both sets, and every Ajtai commitment track is
   **unconditionally binding already at κ=4** (β < q/2 with 32-37 bits of
   headroom). Smudging (λ=50) is statistical, out of estimator scope. See
-  `analysis/SECURITY.md`.
+  `estimators/SECURITY.md`.
 
 - **Full P1→P4 flow** (`dkg_fhe_full_flow.rs` + `crates/latticefold/src/vdkg_flow.rs`;
   opt-in `--features fhe-bridge`, Rust 1.91.1) — the complete protocol on the

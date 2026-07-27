@@ -45,7 +45,7 @@ const QLS: [u64; 3] = [1_073_741_827, 1_073_741_831, 1_073_741_833];
 ///   witnesses with ‖ρ_i‖∞ ≤ c_max from the ring's challenge set (c_max = 255
 ///   for the N8192/N4096 per-byte sets, 32 for Goldilocks), giving
 ///       S_fold = 2·(1 + (2K'−1)·c_max) ≈ 2^13.6–13.9  (K' = 13..17),
-///   which EXCEEDS the ≤ 2^10 envelope assumed in analysis/SECURITY.md and —
+///   which EXCEEDS the ≤ 2^10 envelope assumed in estimators/SECURITY.md and —
 ///   decisively — empties the decode row's Δ-window (the enforced noise bound
 ///   S_fold·C_e would exceed Δ − E_true for any C_e ≥ E_true). Folding R7 is
 ///   therefore infeasible at these parameters; the P track decides directly.

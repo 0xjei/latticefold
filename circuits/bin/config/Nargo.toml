@@ -1,7 +1,0 @@
-[package]
-name = "validate_secure_configs"
-type = "bin"
-authors = ["Gnosis Guild / Interfold"]
-
-[dependencies]
-lib = { path = "../../lib" }

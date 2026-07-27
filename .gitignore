@@ -4,7 +4,7 @@
 .DS_Store
 
 # Python venv for the lattice estimator
-analysis/venv/
+estimators/venv/
 
 # Noir build artifacts (sources + Prover.toml are tracked)
 decider-circuits/**/target/

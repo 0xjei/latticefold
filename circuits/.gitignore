@@ -1,4 +1,0 @@
-target/
-Prover.toml
-# Which BFV preset last populated circuits/bin/target/ (written by build-circuits hydrate/build).
-.active-preset.json
